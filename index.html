@@ -696,8 +696,19 @@ function renderDriver(){
       <hr style="border:none;border-top:1px solid var(--bd);margin:14px 0">
       <button class="btn btn-acc" style="width:100%;justify-content:center;font-size:15px;padding:14px"
         onclick="openPhotoModal(${currentStop})">📸 拍照 · 完成此单</button>
-      ${currentStop===deliveries.length-1?`<hr style="border:none;border-top:1px solid var(--bd);margin:14px 0"><a class="btn btn-grn" style="width:100%;justify-content:center;text-decoration:none" href="https://www.google.com/maps/dir/?api=1&destination=1%2F41-43%20Lexton%20Road%2C%20Box%20Hill%20North%20VIC%203129&travelmode=driving" target="_blank" rel="noopener">🏠 最后一单 · 导航回仓库</a>`:''}
     </div>`;
+
+  // Add return-to-warehouse button for last stop
+  if(currentStop===deliveries.length-1){
+    const returnBtn = document.createElement('a');
+    returnBtn.href = 'https://www.google.com/maps/dir/?api=1&destination=1%2F41-43%20Lexton%20Road%2C%20Box%20Hill%20North%20VIC%203129&travelmode=driving';
+    returnBtn.target = '_blank';
+    returnBtn.rel = 'noopener';
+    returnBtn.className = 'btn btn-grn';
+    returnBtn.style.cssText = 'width:100%;justify-content:center;text-decoration:none;margin-top:12px;display:flex';
+    returnBtn.textContent = '🏠 最后一单 · 导航回仓库';
+    document.getElementById('currentDetail').appendChild(returnBtn);
+  }
 }
 
 function setStop(i){currentStop=i;renderDriver();}
