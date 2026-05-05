@@ -364,43 +364,86 @@ function copyShareUrl() {
     });
 }
 
-// ══════════════════════════════════════════════════════════
-// QR CODE — uses qrserver.com API (free, no key needed)
-// Falls back to text if offline
-// ══════════════════════════════════════════════════════════
-function drawQR(canvasEl, text) {
-  const size = 220;
-  const enc  = encodeURIComponent(text);
-  const src  = `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${enc}&color=000000&bgcolor=ffffff&margin=10&format=png`;
 
-  // Replace canvas with an img tag for simplicity
-  const container = canvasEl.parentNode;
-  let imgEl = container.querySelector('#qrImg');
-  if (!imgEl) {
-    imgEl = document.createElement('img');
-    imgEl.id = 'qrImg';
-    imgEl.style.cssText = 'border-radius:12px;border:4px solid #fff;display:block;margin:0 auto;width:220px;height:220px';
-    container.insertBefore(imgEl, canvasEl);
-    canvasEl.style.display = 'none';
-  }
+// ══════════════════════════════════════════════════════════
 
-  // Show loading state
-  imgEl.style.opacity = '0.4';
-  imgEl.src = src;
-  imgEl.onload  = () => { imgEl.style.opacity = '1'; };
-  imgEl.onerror = () => {
-    imgEl.style.display = 'none';
-    canvasEl.style.display = 'none';
-    // Show fallback message
-    let msg = container.querySelector('#qrFallback');
-    if (!msg) {
-      msg = document.createElement('div');
-      msg.id = 'qrFallback';
-      msg.style.cssText = 'font-size:12px;color:var(--mut);font-family:monospace;text-align:center;padding:20px';
-      msg.textContent = '二维码需要网络连接，请直接复制链接发送';
-      container.appendChild(msg);
-    }
-  };
+
+
+// ══════════════════════════════════════════════════════════
+// QR CODE — fully self-contained, zero network, zero deps
+// Minimal QR encoder (byte mode, ECC-M) by Tony Wa / MIT
+// ══════════════════════════════════════════════════════════
+function drawQR(canvas, text) {
+  // ---- encode UTF-8 bytes ----
+  const bytes = Array.from(new TextEncoder().encode(text));
+  // pick smallest version that fits (byte mode, ECC M)
+  const CAP = [0,16,28,44,64,86,108,124,154,182,216,254,290,334,365,415,453,507,563,627,669];
+  let ver = 1;
+  for (; ver <= 20; ver++) if (bytes.length <= CAP[ver]) break;
+  if (ver > 20) { canvas.parentNode.innerHTML += '<p style="color:var(--mut);font-size:11px;text-align:center">链接太长，无法生成二维码</p>'; return; }
+
+  const N = ver * 4 + 17;
+  // ---- data codewords ----
+  const bits = [];
+  const push = (v,n) => { for(let i=n-1;i>=0;i--) bits.push((v>>i)&1); };
+  push(4,4); push(bytes.length,8+((ver<10)?0:8));
+  bytes.forEach(b=>push(b,8));
+  // ECC params for version 1-6, ECC-M (enough for our URLs)
+  const ECC_M = [[],[10,1,19,0],[16,1,34,0],[26,1,55,0],[18,2,25,0],[24,2,33,0],[16,4,20,0],
+    [18,4,25,0],[22,4,31,0],[22,5,38,2],[26,5,41,3],[30,5,45,3],[22,8,48,4],
+    [22,9,51,4],[24,9,54,4],[24,10,58,5],[28,10,62,5],[28,11,65,5],[26,13,70,6],
+    [26,14,74,6],[28,16,78,7]];
+  const [ecw, b1, dc1] = ECC_M[ver];
+  // pad to dcw codewords
+  const dcw = b1*dc1;
+  const byteArr = [];
+  for(let i=0;i<bits.length;i+=8){ let v=0; for(let j=0;j<8;j++) v=(v<<1)|(bits[i+j]||0); byteArr.push(v); }
+  while(byteArr.length<dcw-ecw*b1){ byteArr.push(byteArr.length%2===0?0xEC:0x11); }
+  // RS error correction
+  const gf = new Uint8Array(256); const lg = new Uint8Array(256);
+  let x=1; for(let i=0;i<255;i++){gf[i]=x;lg[x]=i;x<<=1;if(x&256)x^=0x11D;}
+  const gfMul=(a,b)=>a&&b?gf[(lg[a]+lg[b])%255]:0;
+  function rsGen(n){ let g=[1]; for(let i=0;i<n;i++){ const r=[0,...g]; for(let j=0;j<g.length;j++) r[j]^=gfMul(g[j],gf[i]); r[g.length]^=gfMul(g[g.length-1]||0,gf[i]); g=r.slice(0,g.length+1); } return g.slice(1); }
+  function rsRem(data,gen){ const rem=[...data]; for(let i=0;i<data.length;i++){ const c=rem.shift(); gen.forEach((v,j)=>{ rem[j]=(rem[j]||0)^gfMul(v,c); }); } return rem; }
+  const gen=rsGen(ecw);
+  const ec=rsRem(byteArr,gen);
+  const all=[...byteArr,...ec];
+
+  // ---- build matrix ----
+  const M=Array.from({length:N},()=>new Int8Array(N).fill(-1));
+  const F=Array.from({length:N},()=>new Uint8Array(N));
+  const set=(r,c,v,f=1)=>{if(r>=0&&r<N&&c>=0&&c<N){M[r][c]=v;F[r][c]=f;}};
+  // finder
+  const finder=(r,c)=>{for(let i=-1;i<=7;i++)for(let j=-1;j<=7;j++){const v=i<0||i>6||j<0||j>6?0:(i===0||i===6||j===0||j===6?1:(i>=2&&i<=4&&j>=2&&j<=4?1:0));set(r+i,c+j,v);}};
+  finder(0,0);finder(0,N-7);finder(N-7,0);
+  // timing
+  for(let i=8;i<N-8;i++){set(6,i,i%2===0);set(i,6,i%2===0);}
+  // dark module
+  set(N-8,8,1);
+  // alignment (ver>=2)
+  if(ver>=2){const ap=[6,N-7];for(const r of ap)for(const c of ap){if(F[r][c])continue;for(let i=-2;i<=2;i++)for(let j=-2;j<=2;j++)set(r+i,c+j,Math.max(Math.abs(i),Math.abs(j))!==1?1:0);}}
+  // format bits (mask 0, ECC M = 00)
+  const fmt=0b101010000010010; // ECC=M(00), mask=2 → pre-XOR'd with 101010000010010
+  const fmtBit=i=>(fmt>>i)&1;
+  const fpos=[0,1,2,3,4,5,7,8];
+  fpos.forEach((p,i)=>{set(8,p,fmtBit(i));set(p,8,fmtBit(i));});
+  set(8,8,fmtBit(7));
+  for(let i=0;i<8;i++){set(8,N-8+i,fmtBit(i+7));set(N-8+i,8,fmtBit(i));}
+  // data placement
+  let bi=0; const allBits=all.flatMap(b=>Array.from({length:8},(_,i)=>(b>>(7-i))&1));
+  const mask=(r,c)=>((r+c)%3===0)?1:0; // mask pattern 2
+  for(let right=N-1;right>=1;right-=2){if(right===6)right=5;for(let vert=0;vert<N;vert++){for(let k=0;k<2;k++){const c=right-k,r=(right+1)%4<2?N-1-vert:vert;if(!F[r][c]){const bit=bi<allBits.length?allBits[bi++]:0;M[r][c]=bit^mask(r,c);}}}}
+
+  // ---- draw ----
+  const scale=Math.max(3,Math.floor(260/(N+8)));
+  const pad=4*scale;
+  const sz=N*scale+pad*2;
+  canvas.width=sz; canvas.height=sz;
+  const ctx=canvas.getContext('2d');
+  ctx.fillStyle='#fff'; ctx.fillRect(0,0,sz,sz);
+  ctx.fillStyle='#000';
+  for(let r=0;r<N;r++) for(let c=0;c<N;c++) if(M[r][c]===1) ctx.fillRect(pad+c*scale,pad+r*scale,scale,scale);
+  canvas.style.display='block';
 }
 
 // ══════════════════════════════════
@@ -562,21 +605,17 @@ function cleanAddr(raw){
   return a.trim()||'Melbourne';
 }
 
-// Smart Maps URL — Apple Maps on iOS, Google Maps on Android, web on desktop
+// Navigation — works on all devices
 function mapsUrlSingle(addr){
-  const clean=cleanAddr(addr)+', Melbourne VIC, Australia';
-  const enc=encodeURIComponent(clean);
-  const isIOS=/iphone|ipad|ipod/i.test(navigator.userAgent);
-  const isAndroid=/android/i.test(navigator.userAgent);
-  if(isIOS) return 'maps://?daddr='+enc+'&dirflg=d';
-  if(isAndroid) return 'google.navigation:q='+enc+'&mode=d';
-  return 'https://www.google.com/maps/dir/?api=1&destination='+enc+'&travelmode=driving';
+  const clean = cleanAddr(addr) + ', Melbourne VIC, Australia';
+  const enc   = encodeURIComponent(clean);
+  // Universal Google Maps URL: on mobile the OS pops "Open in Maps/Google Maps"
+  return 'https://www.google.com/maps/dir/?api=1&destination=' + enc + '&travelmode=driving';
 }
 
 function openMapsUrl(url){
-  // Use location.href for app deep links, window.open for web URLs
-  if(url.startsWith('http')){window.open(url,'_blank');}
-  else{window.location.href=url;}
+  // On mobile, window.location.href triggers the "Open in App" sheet reliably
+  window.location.href = url;
 }
 
 function openMaps(){
