@@ -80,8 +80,6 @@ tfoot tr td{border-top:2px solid var(--bd);font-weight:700;color:var(--acc);font
 .share-btns{display:flex;gap:10px}
 .share-btns .btn{flex:1;justify-content:center}
 .modal-close{background:none;border:none;color:var(--mut);cursor:pointer;font-size:22px;line-height:1;padding:0}
-.qr-area{text-align:center}
-#qrCanvas{border-radius:8px;display:none;margin:0 auto}
 
 /* ── Driver mode ── */
 #driverView{display:none;max-width:480px;margin:0 auto;padding:16px 12px}
@@ -202,14 +200,16 @@ Y-云速递: 105件
       <button class="modal-close" onclick="closeShareModal()">×</button>
     </div>
     <div class="share-body">
-      <!-- QR code — auto generated, always visible -->
-      <div style="text-align:center">
-        <div class="label" style="justify-content:center;margin-bottom:12px"><span class="ld"></span>司机扫码进入送货模式</div>
-        <canvas id="qrCanvas" style="border-radius:12px;border:4px solid #fff;display:block;margin:0 auto"></canvas>
-        <div style="font-size:11px;color:var(--mut);font-family:monospace;margin-top:10px">或复制链接发到微信</div>
-      </div>
       <div>
+        <div class="label"><span class="ld"></span>链接（点击全选）</div>
         <div class="url-box ready" id="shareUrlBox" onclick="selectUrl()">正在生成...</div>
+      </div>
+      <div class="share-hint">
+        📌 <b>使用方法：</b><br>
+        1. 点「复制链接」按钮<br>
+        2. 粘贴到微信 / WhatsApp 发给司机<br>
+        3. 司机手机点开链接，直接进入送货模式<br>
+        4. 无需下载任何 App，手机浏览器即可
       </div>
       <div class="share-btns">
         <button class="btn btn-acc" onclick="copyShareUrl()">📋 复制链接</button>
@@ -324,25 +324,9 @@ window.addEventListener('load', () => {
 // ══════════════════════════════════
 // ENCODE / DECODE  (base64 via UTF-8)
 // ══════════════════════════════════
-// LZW compress + base64url — ~60% shorter URLs
+// Simple UTF-8 → base64url (reliable, handles Chinese)
 function encodeData(str) {
-  // LZW compress
-  const dict = {};
-  let data = str, out = [], code = 256, phrase = data[0];
-  for (let i = 1; i < data.length; i++) {
-    const curr = data[i];
-    if (dict[phrase + curr] != null) {
-      phrase += curr;
-    } else {
-      out.push(phrase.length > 1 ? dict[phrase] : phrase.charCodeAt(0));
-      dict[phrase + curr] = code++;
-      phrase = curr;
-    }
-  }
-  out.push(phrase.length > 1 ? dict[phrase] : phrase.charCodeAt(0));
-  // encode as base64url
-  const bytes = new Uint8Array(out.length * 2);
-  out.forEach((v,i) => { bytes[i*2]=v>>8; bytes[i*2+1]=v&0xff; });
+  const bytes = new TextEncoder().encode(str);
   let bin = '';
   bytes.forEach(b => bin += String.fromCharCode(b));
   return btoa(bin).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
@@ -350,22 +334,8 @@ function encodeData(str) {
 function decodeData(b64url) {
   const b64 = b64url.replace(/-/g,'+').replace(/_/g,'/');
   const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
-  const ints = [];
-  for (let i=0;i<bytes.length;i+=2) ints.push((bytes[i]<<8)|bytes[i+1]);
-  // LZW decompress
-  const dict = {};
-  let code=256, old=ints[0], str=String.fromCharCode(old), out=str, phrase;
-  for (let i=1;i<ints.length;i++) {
-    const curr=ints[i];
-    if (curr<256) phrase=String.fromCharCode(curr);
-    else phrase=dict[curr]!=null?dict[curr]:str+str[0];
-    out+=phrase;
-    dict[code++]=str+phrase[0];
-    str=phrase;
-  }
-  return out;
+  const bytes = Uint8Array.from(bin, ch => ch.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
 }
 
 // ══════════════════════════════════
@@ -387,7 +357,7 @@ function openShareModal() {
   document.getElementById('shareUrlBox').dataset.url = url;
   document.getElementById('shareModal').classList.add('open');
   // Draw QR after modal is visible
-  setTimeout(() => drawQR(document.getElementById('qrCanvas'), url), 30);
+  setTimeout(() => drawQR(
 }
 function closeShareModal() {
   document.getElementById('shareModal').classList.remove('open');
@@ -417,137 +387,6 @@ function copyShareUrl() {
 
 
 
-// ══════════════════════════════════════════════════════════════
-// QR CODE — proven canvas renderer, zero deps, zero network
-// Based on UTF-8 byte encoding with Reed-Solomon ECC
-// ══════════════════════════════════════════════════════════════
-function drawQR(canvas, text) {
-  try {
-    const bytes = Array.from(new TextEncoder().encode(text));
-    const n = bytes.length;
-
-    // Version/capacity table for ECC-M byte mode
-    const caps = [0,14,26,42,62,84,106,122,152,180,213,251,287,331,362,412,450,504,560,624,666,711,779,857,911,997,1059,1125,1190,1264,1370,1452,1538,1628,1722,1809,1911,1989,2099,2213,2357,2469];
-    let ver = 1;
-    while (ver <= 40 && caps[ver] < n) ver++;
-    if (ver > 40) { canvas.insertAdjacentHTML('afterend','<p style="color:var(--mut);font-size:11px;text-align:center">链接过长</p>'); return; }
-
-    // ECC-M params [ecPerBlock, blocks1, dc1, blocks2, dc2]
-    const ecc = [[],[10,1,19,0,0],[16,1,34,0,0],[26,1,55,0,0],[18,2,25,0,0],[24,2,33,0,0],[16,4,20,0,0],[18,4,25,0,0],[22,4,31,0,0],[22,5,38,2,39],[26,5,41,3,42],[30,5,45,3,46],[22,8,48,4,49],[22,9,51,4,52],[24,9,54,4,55],[24,10,58,5,59],[28,10,62,5,63],[28,11,65,5,66],[26,13,70,6,71],[26,14,74,6,75],[28,16,78,7,79]];
-    if (ver > 20) ver = 20; // cap at v20 for our table
-    const [ecpb,bl1,dc1,bl2,dc2] = ecc[ver];
-    const totalDC = bl1*dc1 + bl2*dc2;
-
-    // Build data bit stream
-    const bits = [];
-    const pushBits = (v,len) => { for(let i=len-1;i>=0;i--) bits.push((v>>i)&1); };
-    pushBits(4,4);
-    if(ver<10) pushBits(n,8); else pushBits(n,16);
-    bytes.forEach(b => pushBits(b,8));
-    // Terminator & padding
-    for(let i=0;i<4&&bits.length<totalDC*8;i++) bits.push(0);
-    while(bits.length%8) bits.push(0);
-    const pads=[0xEC,0x11]; let pi=0;
-    while(bits.length<totalDC*8) { pushBits(pads[pi%2],8); pi++; }
-
-    // bytes array
-    const data=[];
-    for(let i=0;i<bits.length;i+=8){let v=0;for(let j=0;j<8;j++)v=(v<<1)|(bits[i+j]||0);data.push(v);}
-
-    // Galois field
-    const EXP=new Uint8Array(512),LOG=new Uint8Array(256);
-    let a=1;
-    for(let i=0;i<255;i++){EXP[i]=a;LOG[a]=i;a<<=1;if(a>255)a^=0x11D;}
-    for(let i=255;i<512;i++) EXP[i]=EXP[i-255];
-    const gmul=(a,b)=>(a&&b)?EXP[LOG[a]+LOG[b]]:0;
-
-    // RS divisor polynomial
-    function rsGen(n){let g=[1];for(let i=0;i<n;i++){const ng=new Array(g.length+1).fill(0);for(let j=0;j<g.length;j++){ng[j]^=gmul(g[j],EXP[i]);ng[j+1]^=g[j];}g=ng;}return g.slice(0,n);}
-    function rsRem(d,gen){const r=[...d];for(let i=0;i<d.length;i++){const c=r.shift();if(c)gen.forEach((v,j)=>{r[j]^=gmul(v,c);});r.push(0);}return r.slice(0,gen.length);}
-
-    const gen=rsGen(ecpb);
-    // Interleave data + ECC blocks
-    const dcBlocks=[], ecBlocks=[];
-    let pos=0;
-    for(let b=0;b<bl1+bl2;b++){const sz=(b<bl1)?dc1:dc2;const blk=data.slice(pos,pos+sz);pos+=sz;dcBlocks.push(blk);ecBlocks.push(rsRem(blk,gen));}
-    const interleaved=[];
-    const maxDC=Math.max(dc1,dc2);
-    for(let i=0;i<maxDC;i++) dcBlocks.forEach(b=>{if(i<b.length)interleaved.push(b[i]);});
-    for(let i=0;i<ecpb;i++) ecBlocks.forEach(b=>interleaved.push(b[i]));
-
-    // All codeword bits
-    const cwBits=interleaved.flatMap(b=>Array.from({length:8},(_,i)=>(b>>(7-i))&1));
-
-    // Matrix
-    const N=ver*4+17;
-    const mod=Array.from({length:N},()=>new Array(N).fill(null));
-    const isFn=Array.from({length:N},()=>new Array(N).fill(false));
-    const place=(r,c,v)=>{if(r>=0&&r<N&&c>=0&&c<N){mod[r][c]=v?1:0;isFn[r][c]=true;}};
-
-    // Finder patterns
-    const finder=(tr,tc)=>{for(let r=-1;r<=7;r++)for(let cc=-1;cc<=7;cc++){const onEdge=(r===0||r===6||cc===0||cc===6),inCore=(r>=2&&r<=4&&cc>=2&&cc<=4),outside=(r<0||r>6||cc<0||cc>6);place(tr+r,tc+cc,outside?0:(onEdge||inCore)?1:0);}};
-    finder(0,0);finder(0,N-7);finder(N-7,0);
-    // Separators already 0 from finder outer ring
-
-    // Timing
-    for(let i=8;i<N-8;i++){place(6,i,i%2===0);place(i,6,i%2===0);}
-
-    // Dark module
-    place(N-8,8,1);
-
-    // Alignment patterns for ver>=2
-    if(ver>=2){
-      const alPos=[6,N-7];
-      for(const ar of alPos)for(const ac of alPos){
-        if(isFn[ar][ac])continue;
-        for(let dr=-2;dr<=2;dr++)for(let dc=-2;dc<=2;dc++){
-          const onEdge=Math.abs(dr)===2||Math.abs(dc)===2,center=dr===0&&dc===0;
-          place(ar+dr,ac+dc,onEdge||center?1:0);
-        }
-      }
-    }
-
-    // Format info (mask=2 QQQ, ECC=M=00): bits = 000010 011010011 → xor 101010000010010
-    // ECC=M(01 format bit=0,1)→ formatBits=00, mask=2→010
-    // raw = 00 010 = 00010, BCH(00010)=0100110110, full=00010 0100110110
-    // xor 101010000010010 → 101000100100100
-    const fmtBits=[1,0,1,0,0,0,1,0,0,1,0,0,1,0,0];
-    const fmtSeq=[[8,0],[8,1],[8,2],[8,3],[8,4],[8,5],[8,7],[8,8],[7,8],[5,8],[4,8],[3,8],[2,8],[1,8],[0,8]];
-    fmtSeq.forEach(([r,cc],i)=>{place(r,cc,fmtBits[i]);place(N-1-cc,r<8?r:N-8+i,fmtBits[i]);});
-    // secondary format copy
-    for(let i=0;i<8;i++) place(N-1-i,8,fmtBits[i]);
-    for(let i=0;i<7;i++) place(8,N-8+i,fmtBits[i+8]);
-
-    // Data placement + mask 2: (row/2 + col/3)%2==0
-    const maskFn=(r,c)=>(Math.floor(r/2)+Math.floor(c/3))%2===0;
-    let bi=0;
-    for(let right=N-1;right>=1;right-=2){
-      if(right===6)right=5;
-      for(let i=0;i<N;i++){
-        for(let k=0;k<2;k++){
-          const c=right-k, r=(Math.floor((N-1-right)/2)%2===0)?(N-1-i):i;
-          if(!isFn[r]||!isFn[r][c]){
-            const bit=bi<cwBits.length?cwBits[bi]:0; bi++;
-            mod[r][c]=(bit^(maskFn(r,c)?1:0));
-          }
-        }
-      }
-    }
-
-    // Draw
-    const scale=Math.max(3,Math.floor(248/N));
-    const pad=3*scale, sz=N*scale+pad*2;
-    canvas.width=sz; canvas.height=sz;
-    const ctx=canvas.getContext('2d');
-    ctx.fillStyle='#ffffff'; ctx.fillRect(0,0,sz,sz);
-    ctx.fillStyle='#000000';
-    for(let r=0;r<N;r++)for(let cc=0;cc<N;cc++) if(mod[r][cc]===1) ctx.fillRect(pad+cc*scale,pad+r*scale,scale,scale);
-    canvas.style.display='block';
-  } catch(e) {
-    console.error('QR error',e);
-    canvas.insertAdjacentHTML('afterend','<p style="color:var(--mut);font-size:11px;text-align:center">二维码生成失败，请复制链接</p>');
-  }
-}
 
 // ══════════════════════════════════
 // PARSER
@@ -710,16 +549,11 @@ function cleanAddr(raw){
 
 // Navigation — works on all devices
 function mapsUrlSingle(addr){
-  const clean = cleanAddr(addr) + ', Melbourne VIC, Australia';
-  const enc   = encodeURIComponent(clean);
-  // Universal Google Maps URL: on mobile the OS pops "Open in Maps/Google Maps"
-  return 'https://www.google.com/maps/dir/?api=1&destination=' + enc + '&travelmode=driving';
+  const enc = encodeURIComponent(cleanAddr(addr) + ', Melbourne VIC, Australia');
+  return 'https://maps.google.com/?daddr=' + enc + '&directionsmode=driving';
 }
 
-function openMapsUrl(url){
-  // On mobile, window.location.href triggers the "Open in App" sheet reliably
-  window.location.href = url;
-}
+function openMapsUrl(url){ window.open(url, '_blank'); }
 
 function openMaps(){
   if(!deliveries.length)return;
@@ -729,7 +563,7 @@ function openMaps(){
   const orig=addrs[0],dest=addrs[addrs.length-1],wp=addrs.slice(1,-1).join('|');
   let url='https://www.google.com/maps/dir/?api=1&origin='+orig+'&destination='+dest+'&travelmode=driving';
   if(wp)url+='&waypoints='+wp;
-  window.open(url,'_blank');
+  window.open(url, '_blank');
   toast('已打开 Google Maps 全程路线','ok');
 }
 
