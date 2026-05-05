@@ -294,15 +294,10 @@ window.addEventListener('load', () => {
     try {
       const json = decodeData(hash.slice(2));
       const payload = JSON.parse(json);
-      // Support both old format {deliveries,date,note} and new slim format {d,dt,nt}
-      if (payload.d) {
-        deliveries = payload.d.map(x=>({name:x.n,packages:x.p,address:x.a,phone:x.t,timeSlot:x.s,cash:x.c,note:x.o||'',timeOrder:50}));
-      } else {
-        deliveries = payload.deliveries || [];
-      }
-      const date = payload.dt || payload.date || '';
-      const note = payload.nt || payload.note || '';
-      const wh   = payload.wh || '';
+      deliveries = payload.deliveries || [];
+      const date = payload.date || '';
+      const note = payload.note || '';
+      const wh   = payload.wh  || '';
       if (wh) { const el=document.getElementById('warehouseAddr'); if(el) el.value=wh; }
       window._warehouseAddr = wh;
       if (deliveries.length) {
@@ -345,19 +340,14 @@ function openShareModal() {
   if (!deliveries.length) { toast('请先解析排班数据','err'); return; }
   const date = document.getElementById('delivDate').value;
   const note = document.getElementById('driverNote').value;
-  // Strip heavy fields before encoding to keep URL short
-  const wh = document.getElementById('warehouseAddr').value.trim();
-  const slim = deliveries.map(d=>({n:d.name,p:d.packages,a:d.address,t:d.phone,s:d.timeSlot,c:d.cash,o:d.note||''}));
-  const payload = JSON.stringify({d:slim,dt:date,nt:note,wh});
+  const wh   = (document.getElementById('warehouseAddr')||{}).value || '';
+  const payload = JSON.stringify({ deliveries, date, note, wh });
   const encoded = encodeData(payload);
-  // Build URL: same file location + hash
   const base = location.href.split('#')[0];
-  const url = base + '#d=' + encoded;
+  const url  = base + '#d=' + encoded;
   document.getElementById('shareUrlBox').textContent = url;
   document.getElementById('shareUrlBox').dataset.url = url;
   document.getElementById('shareModal').classList.add('open');
-  // Draw QR after modal is visible
-  setTimeout(() => drawQR(
 }
 function closeShareModal() {
   document.getElementById('shareModal').classList.remove('open');
@@ -549,11 +539,22 @@ function cleanAddr(raw){
 
 // Navigation — works on all devices
 function mapsUrlSingle(addr){
-  const enc = encodeURIComponent(cleanAddr(addr) + ', Melbourne VIC, Australia');
-  return 'https://maps.google.com/?daddr=' + enc + '&directionsmode=driving';
+  const dest = cleanAddr(addr) + ', Melbourne VIC, Australia';
+  const enc  = encodeURIComponent(dest);
+  // geo: URI opens native maps app on both iOS and Android
+  return 'geo:0,0?q=' + enc;
 }
 
-function openMapsUrl(url){ window.open(url, '_blank'); }
+function openMapsUrl(url){
+  // Use location.href — more reliable on mobile, won't be blocked as popup
+  const a = document.createElement('a');
+  a.href = url;
+  a.target = '_blank';
+  a.rel = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
 
 function openMaps(){
   if(!deliveries.length)return;
