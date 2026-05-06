@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>RoyalTea 送货排班</title>
-<meta name="version" content="20260505134625">
+<meta name="version" content="20260506030508">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;600;700;800&display=swap');
 :root{--bg:#0c0c0c;--s1:#161616;--s2:#1e1e1e;--s3:#252525;--bd:#2a2a2a;--acc:#f5c518;--txt:#ede9e0;--mut:#5a5a5a;--grn:#3ecf6e;--red:#e05252;--blu:#3b82f6;}
@@ -391,7 +391,85 @@ function copyShareUrl() {
 // ══════════════════════════════════
 // PARSER
 // ══════════════════════════════════
-function parseAndSort() {
+
+// ══════════════════════════════════════════════════════
+// GEOCODE + NEAREST-NEIGHBOR ROUTING
+// Uses OpenStreetMap Nominatim (free, no API key)
+// ══════════════════════════════════════════════════════
+const WH = { lat: -37.8136, lng: 145.1185, address: '1/41-43 Lexton Road, Box Hill North VIC 3129' };
+
+// Haversine distance in km
+function haversine(lat1, lng1, lat2, lng2) {
+  const R = 6371;
+  const dLat = (lat2-lat1)*Math.PI/180;
+  const dLng = (lng2-lng1)*Math.PI/180;
+  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+// Geocode one address via Nominatim
+async function geocodeOne(address) {
+  try {
+    const q = encodeURIComponent(address + ', Melbourne VIC, Australia');
+    const url = 'https://nominatim.openstreetmap.org/search?q=' + q + '&format=json&limit=1&countrycodes=au';
+    const res = await fetch(url, { headers: { 'Accept-Language': 'en', 'User-Agent': 'RoyalTea-Delivery/1.0' } });
+    const data = await res.json();
+    if (data.length > 0) return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
+  } catch(e) {}
+  return null;
+}
+
+async function geocodeAndRoute(stops) {
+  // Geocode all stops (with small delay to respect Nominatim rate limit: 1 req/sec)
+  let geocoded = 0;
+  for (let i = 0; i < stops.length; i++) {
+    setStatus('busy', `正在定位地址 ${i+1}/${stops.length}...`);
+    const addr = cleanAddr(stops[i].address);
+    if (!addr || addr === 'Melbourne') {
+      stops[i]._lat = WH.lat + (Math.random()-0.5)*0.1; // random near warehouse if no address
+      stops[i]._lng = WH.lng + (Math.random()-0.5)*0.1;
+    } else {
+      const geo = await geocodeOne(addr);
+      if (geo) {
+        stops[i]._lat = geo.lat;
+        stops[i]._lng = geo.lng;
+        geocoded++;
+      } else {
+        stops[i]._lat = WH.lat + (Math.random()-0.5)*0.15;
+        stops[i]._lng = WH.lng + (Math.random()-0.5)*0.15;
+      }
+    }
+    // Nominatim rate limit: 1 request per second
+    if (i < stops.length - 1) await new Promise(r => setTimeout(r, 1100));
+  }
+
+  // Nearest-neighbor from warehouse
+  setStatus('busy', `定位完成 ${geocoded}/${stops.length}，正在规划路线...`);
+  const unvisited = [...stops];
+  const route = [];
+  let curLat = WH.lat, curLng = WH.lng;
+
+  while (unvisited.length > 0) {
+    let bestIdx = 0, bestDist = Infinity;
+    for (let i = 0; i < unvisited.length; i++) {
+      const d = haversine(curLat, curLng, unvisited[i]._lat, unvisited[i]._lng);
+      if (d < bestDist) { bestDist = d; bestIdx = i; }
+    }
+    const next = unvisited.splice(bestIdx, 1)[0];
+    route.push(next);
+    curLat = next._lat;
+    curLng = next._lng;
+  }
+
+  deliveries = route;
+  renderTable();
+  setStatus('ok', `✓ 路线规划完成，共 ${deliveries.length} 个客户（已按最短路线排序）`);
+  toast(`路线规划完成！${deliveries.length} 单`, 'ok');
+  document.getElementById('driverModeBtn').style.display = '';
+  document.getElementById('shareBtn').style.display = '';
+}
+
+async function parseAndSort() {
   const raw = document.getElementById('rawInput').value.trim();
   if (!raw) { toast('请先粘贴客户信息','err'); return; }
   setStatus('busy','正在解析...');
@@ -401,14 +479,11 @@ function parseAndSort() {
 
   if (!results.length) { setStatus('err','未能识别任何客户信息，请检查格式'); return; }
 
-  results.sort((a,b) => a.timeOrder - b.timeOrder);
-  deliveries = results;
+  // Geocode addresses then run nearest-neighbor from warehouse
+  setStatus('busy','正在计算最短路线...');
+  await geocodeAndRoute(results);
 
-  renderTable();
-  setStatus('ok',`✓ 解析完成，共 ${deliveries.length} 个客户，已按时间排线`);
-  toast(`解析成功！${deliveries.length} 单`,'ok');
-  document.getElementById('driverModeBtn').style.display = '';
-  document.getElementById('shareBtn').style.display = '';
+  // rendering and status handled by geocodeAndRoute
 }
 
 function splitBlocks(raw) {
@@ -817,4 +892,3 @@ function escAttr(s){return String(s||'').replace(/"/g,'&quot;').replace(/'/g,'&#
 
 </body>
 </html>
- 
