@@ -605,29 +605,43 @@ async function callOpenRouter(messages, systemOverride, apiKey){
     return {role:msg.role, content:parts};
   });
 
-  const r = await fetch('https://openrouter.ai/api/v1/chat/completions',{
-    method:'POST',
-    headers:{
-      'Content-Type':'application/json',
-      'Authorization':'Bearer '+apiKey,
-      'HTTP-Referer':'https://cgwhx1172721-dotcom.github.io',
-      'X-Title':'Delivery App'
-    },
-    body:JSON.stringify({
-      model:'google/gemini-2.0-flash-exp:free',
-      messages:[{role:'system',content:system},...convertedMessages],
-      temperature:0.1,
-      max_tokens:3000
-    })
-  });
-  if(!r.ok){
-    const err=await r.json().catch(()=>({}));
-    throw new Error(err.error?.message||'OpenRouter HTTP '+r.status);
+  // Try models in order until one works
+  const hasImage = messages.some(m => Array.isArray(m.content) && m.content.some(b=>b.type==='image'));
+  const models = hasImage
+    ? ['qwen/qwen2.5-vl-32b-instruct:free', 'meta-llama/llama-3.2-11b-vision-instruct:free', 'google/gemma-3-27b-it:free']
+    : ['openrouter/free', 'meta-llama/llama-3.3-70b-instruct:free', 'qwen/qwen3-8b:free'];
+
+  let lastErr = '';
+  for(const model of models){
+    try{
+      const r = await fetch('https://openrouter.ai/api/v1/chat/completions',{
+        method:'POST',
+        headers:{
+          'Content-Type':'application/json',
+          'Authorization':'Bearer '+apiKey,
+          'HTTP-Referer':'https://cgwhx1172721-dotcom.github.io',
+          'X-Title':'Delivery App'
+        },
+        body:JSON.stringify({
+          model,
+          messages:[{role:'system',content:system},...convertedMessages],
+          temperature:0.1,
+          max_tokens:3000
+        })
+      });
+      const d = await r.json();
+      if(!r.ok){
+        lastErr = d.error?.message || `HTTP ${r.status}`;
+        continue; // try next model
+      }
+      const content = d.choices?.[0]?.message?.content;
+      if(content) return content;
+      lastErr = 'Empty response from '+model;
+    }catch(e){
+      lastErr = e.message;
+    }
   }
-  const d=await r.json();
-  const content = d.choices?.[0]?.message?.content;
-  if(!content) throw new Error('OpenRouter returned empty response');
-  return content;
+  throw new Error('All models failed. Last error: '+lastErr);
 }
 
 async function callGemini(messages, systemOverride, apiKey){
