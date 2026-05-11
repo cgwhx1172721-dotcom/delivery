@@ -905,6 +905,11 @@ function showToast(msg,type){
 (async()=>{
   await openDB();
   document.getElementById('deliveryDate').value=new Date().toISOString().split('T')[0];
+
+  // Register Service Worker for PWA
+  if('serviceWorker' in navigator){
+    navigator.serviceWorker.register('./sw.js').then(()=>console.log('SW registered')).catch(()=>{});
+  }
   const saved=localStorage.getItem('driverName');
   if(saved){document.getElementById('driverNameInput').value=saved;confirmDriver();}
   const mf={name:'环球伙拼送货',short_name:'送货排班',display:'standalone',background_color:'#0f1117',theme_color:'#0f1117',start_url:'./',
