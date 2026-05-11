@@ -10,7 +10,7 @@
 <meta name="apple-mobile-web-app-title" content="环球伙拼送货">
 <meta name="mobile-web-app-capable" content="yes">
 <link rel="manifest" id="manifestLink" href="manifest.json">
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" onerror="this.remove()">
+
 <title>环球伙拼 · 送货排班</title>
 <style>
 :root {
@@ -117,9 +117,7 @@ tr.drag-over td{background:rgba(79,142,247,.1);}
 .empty-state{text-align:center;padding:50px 20px;color:var(--mut);}
 .empty-state .icon{font-size:36px;margin-bottom:10px;}
 
-/* ── Map ── */
-#routeMap{height:300px;border-top:1px solid var(--border);flex-shrink:0;}
-.leaflet-container{background:#1a1d27;}
+
 
 /* ── Driver mode ── */
 .driver-bar{background:linear-gradient(135deg,var(--accent),#7c5cf7);padding:14px 16px;display:flex;align-items:center;gap:10px;flex-shrink:0;}
@@ -293,8 +291,6 @@ tr.drag-over td{background:rgba(79,142,247,.1);}
       <!-- per-driver tabs -->
       <div class="driver-route-tab" id="driverRouteTabs"></div>
       <div class="table-wrap" id="tableWrap"></div>
-      <!-- Map -->
-      <div id="routeMap"></div>
       <div class="action-bar">
         <button class="btn btn-green btn-sm" onclick="openAllMaps()">🗺 Google Maps 导航</button>
         <button class="btn btn-primary btn-sm" onclick="startDelivery()">🚚 开始送货</button>
@@ -343,7 +339,7 @@ tr.drag-over td{background:rgba(79,142,247,.1);}
 </div>
 <div class="toast" id="toast"></div>
 
-<!-- Leaflet loaded dynamically in renderMap() to avoid blocking page on CDN failure -->
+
 <script>
 // ═══════════════════════════════════════
 // STATE
@@ -355,7 +351,6 @@ let vrpRoutes = [];        // [{driverName, stops:[], distKm, timeMin}]
 let activeRouteTab = 0;
 let imgBase64 = null, imgMime = null;
 let currentSession = null;
-let leafletMap = null;
 
 const WAREHOUSE_ADDR = 'U1/41-43 Lexton Road, Box Hill North VIC 3129 Australia';
 const WAREHOUSE_COORDS = [145.1210, -37.7533]; // [lng, lat] for ORS
@@ -495,7 +490,6 @@ function switchPage(name){
   });
   if(name==='driver')renderDriverStops();
   if(name==='history')loadHistory();
-  if(name==='plan'&&leafletMap){setTimeout(()=>leafletMap.invalidateSize(),100);}
 }
 function switchTab(name){
   ['text','image'].forEach(t=>{
@@ -586,12 +580,12 @@ function orsAuthHeader(key){
 }
 
 async function geocodeAddr(addr){
+  // Browser → Nominatim works fine (no CORS issue from browser)
   const q=encodeURIComponent(addr+', Melbourne, VIC, Australia');
-  // Always try Nominatim first — reliable, no CORS, no key needed
   try{
     const r=await fetch(
       `https://nominatim.openstreetmap.org/search?q=${q}&format=json&limit=1&countrycodes=au`,
-      {headers:{'Accept-Language':'en','User-Agent':'HuanquiDelivery/1.0'}}
+      {headers:{'Accept-Language':'en'}}
     );
     const d=await r.json();
     if(d&&d[0])return{lng:parseFloat(d[0].lon),lat:parseFloat(d[0].lat),ok:true};
@@ -599,27 +593,64 @@ async function geocodeAddr(addr){
   return null;
 }
 
+// Geocode ALL addresses in one Claude call (fast, parallel, no rate limit)
+async function geocodeAllViaClaude(addresses){
+  setStatus('loading','Claude 正在解析所有地址坐标...');
+  const prompt=`For each Melbourne, Australia address below, return the GPS coordinates.
+Return ONLY a JSON array, no other text:
+[{"address":"...","lat":-37.xxx,"lng":145.xxx}, ...]
+
+Addresses:
+${JSON.stringify(addresses)}`;
+  try{
+    const txt=await callClaude([{role:'user',content:prompt}]);
+    const list=parseJSON(txt);
+    const map={};
+    list.forEach(item=>{ map[item.address]={lat:item.lat,lng:item.lng,ok:true}; });
+    return map;
+  }catch(e){
+    console.warn('Claude geocode failed:',e);
+    return {};
+  }
+}
+
 // ═══════════════════════════════════════
 // VRP OPTIMIZATION ENGINE
-// Uses ORS /optimization endpoint (Vroom — industrial-grade TSP/VRP solver)
-// Falls back to 2-opt on straight-line distances if no API key
+// 1. Geocode via Claude (batch, fast)
+// 2. ORS Vroom VRP if key present
+// 3. Local 2-opt fallback
 // ═══════════════════════════════════════
 async function runVRP(arr){
   const n=arr.length;
   const key=getOrsKey();
 
-  // ── Step 1: Geocode all addresses via Nominatim (1 req/sec) ──
-  const coords=[];
-  for(let i=0;i<n;i++){
-    setStatus('loading',`地理编码 ${i+1}/${n}：${arr[i].name}...`);
-    const c=await geocodeAddr(arr[i].address);
-    coords.push(c?{lng:c.lng,lat:c.lat,ok:true}:{
+  // ── Step 1: Geocode all addresses ──
+  // Try Claude batch geocoding first (fast, 1 API call for all)
+  const addresses=arr.map(s=>s.address);
+  setStatus('loading',`地理编码 ${n} 个地址...`);
+
+  let coordMap=await geocodeAllViaClaude(addresses);
+  let claudeHits=Object.keys(coordMap).length;
+
+  // For any that failed, fall back to Nominatim one by one
+  const missing=arr.filter(s=>!coordMap[s.address]);
+  if(missing.length>0){
+    setStatus('loading',`Nominatim 补充定位 ${missing.length} 个地址...`);
+    for(let i=0;i<missing.length;i++){
+      const c=await geocodeAddr(missing[i].address);
+      if(c) coordMap[missing[i].address]={lat:c.lat,lng:c.lng,ok:true};
+      if(i<missing.length-1)await new Promise(r=>setTimeout(r,1100));
+    }
+  }
+
+  const coords=arr.map(s=>{
+    const c=coordMap[s.address];
+    return c?{lng:c.lng,lat:c.lat,ok:true}:{
       lng:WAREHOUSE_COORDS[0]+(Math.random()-.5)*.02,
       lat:WAREHOUSE_COORDS[1]+(Math.random()-.5)*.02,
       ok:false
-    });
-    if(i<n-1)await new Promise(r=>setTimeout(r,1100)); // Nominatim: max 1/sec
-  }
+    };
+  });
 
   const failed=coords.filter(c=>!c.ok).length;
   setStatus('loading',`路线优化中（${drivers.length}辆车）...`);
@@ -767,64 +798,100 @@ Payload: ${JSON.stringify(vrpPayload)}`
   renderRouteResult(arr.length);
 }
 
-// ── Local 2-opt fallback ──
-function haversine(a,b){
-  const R=6371,dLat=(b.lat-a.lat)*Math.PI/180,dLng=(b.lng-a.lng)*Math.PI/180;
-  const x=Math.sin(dLat/2)**2+Math.cos(a.lat*Math.PI/180)*Math.cos(b.lat*Math.PI/180)*Math.sin(dLng/2)**2;
-  return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));
-}
-function routeDist(route,wh){
-  const toLL=n=>({lat:n.lat,lng:n.lng});
-  const whLL={lat:wh[1],lng:wh[0]};
-  if(!route.length)return 0;
-  let d=haversine(whLL,toLL(route[0]));
-  for(let i=0;i<route.length-1;i++)d+=haversine(toLL(route[i]),toLL(route[i+1]));
-  d+=haversine(toLL(route[route.length-1]),whLL);
-  return d;
-}
-function nn(nodes,wh){
-  const whLL={lat:wh[1],lng:wh[0]};
-  const unvisited=[...nodes],route=[];let cur=whLL;
-  while(unvisited.length){
-    let best=0,bestD=Infinity;
-    unvisited.forEach((n,i)=>{const d=haversine(cur,{lat:n.lat,lng:n.lng});if(d<bestD){bestD=d;best=i;}});
-    route.push(unvisited[best]);cur={lat:unvisited[best].lat,lng:unvisited[best].lng};unvisited.splice(best,1);
+// ── Local optimization: Claude TSP + 2-opt polish ──
+async function runLocal2opt(arr,coords){
+  setStatus('loading','Claude TSP 求解最优路线...');
+
+  // Ask Claude to solve TSP — it knows Melbourne geography
+  const stops_for_claude=arr.map((s,i)=>({
+    id:i, name:s.name, address:s.address,
+    lat:coords[i].lat, lng:coords[i].lng
+  }));
+
+  const warehouse={lat:WAREHOUSE_COORDS[1], lng:WAREHOUSE_COORDS[0], address:'U1/41-43 Lexton Road, Box Hill North VIC 3129'};
+
+  let tspOrder=null;
+  try{
+    const prompt=`You are a route optimization expert for Melbourne, Australia.
+Warehouse (start and end): ${warehouse.address} (lat:${warehouse.lat}, lng:${warehouse.lng})
+
+Delivery stops:
+${JSON.stringify(stops_for_claude,null,2)}
+
+Solve the Traveling Salesman Problem. Find the optimal visiting order to minimize total driving distance.
+Consider actual Melbourne road network, not just straight lines.
+Return ONLY a JSON array of stop IDs in optimal visit order, e.g.: [3,0,7,2,...]
+No explanation, just the array.`;
+
+    const txt=await callClaude([{role:'user',content:prompt}]);
+    // Robustly extract JSON array from response
+    const clean=txt.replace(/```json|```/g,'').trim();
+    const match=clean.match(/\[[\d,\s]+\]/);
+    if(!match) throw new Error('No array found');
+    const order=JSON.parse(match[0]);
+    if(Array.isArray(order)&&order.length===arr.length){
+      tspOrder=order;
+    }
+  }catch(e){
+    console.warn('Claude TSP failed, using nearest-neighbour:',e);
   }
-  return route;
-}
-function twoOpt(route,wh){
-  let best=[...route];let improved=true;let passes=0;
-  while(improved&&passes<200){
+
+  // Build initial route from Claude's TSP order or nearest-neighbour fallback
+  let nodes=coords.map((c,i)=>({...arr[i],lat:c.lat,lng:c.lng,ok:c.ok,idx:i}));
+  let route;
+
+  if(tspOrder){
+    route=tspOrder.map(id=>nodes[id]);
+    setStatus('loading','2-opt 精化路线...');
+  } else {
+    // Nearest-neighbour fallback
+    const wh={lat:WAREHOUSE_COORDS[1],lng:WAREHOUSE_COORDS[0]};
+    let unvisited=[...nodes],cur=wh;
+    route=[];
+    while(unvisited.length){
+      let best=0,bestD=Infinity;
+      unvisited.forEach((n,i)=>{const d=hav(cur,n);if(d<bestD){bestD=d;best=i;}});
+      route.push(unvisited[best]);cur=unvisited[best];unvisited.splice(best,1);
+    }
+  }
+
+  // 2-opt polish
+  const wh={lat:WAREHOUSE_COORDS[1],lng:WAREHOUSE_COORDS[0]};
+  function hav(a,b){
+    const R=6371,dlat=(b.lat-a.lat)*Math.PI/180,dlng=(b.lng-a.lng)*Math.PI/180;
+    const x=Math.sin(dlat/2)**2+Math.cos(a.lat*Math.PI/180)*Math.cos(b.lat*Math.PI/180)*Math.sin(dlng/2)**2;
+    return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));
+  }
+  function routeD(r){
+    let d=hav(wh,r[0]);
+    for(let i=0;i<r.length-1;i++)d+=hav(r[i],r[i+1]);
+    return d+hav(r[r.length-1],wh);
+  }
+  let improved=true,passes=0;
+  while(improved&&passes<300){
     improved=false;passes++;
-    for(let i=0;i<best.length-1;i++){
-      for(let k=i+1;k<best.length;k++){
-        const c=[...best.slice(0,i),...best.slice(i,k+1).reverse(),...best.slice(k+1)];
-        if(routeDist(c,wh)<routeDist(best,wh)-0.001){best=c;improved=true;}
+    for(let i=0;i<route.length-1;i++){
+      for(let k=i+1;k<route.length;k++){
+        const c=[...route.slice(0,i),...route.slice(i,k+1).reverse(),...route.slice(k+1)];
+        if(routeD(c)<routeD(route)-0.001){route=c;improved=true;}
       }
     }
   }
-  return best;
-}
 
-function runLocal2opt(arr,coords){
-  // Split stops evenly among drivers
-  const nodes=coords.map((c,i)=>({...c,idx:i}));
-  const chunkSize=Math.ceil(nodes.length/drivers.length);
-  vrpRoutes=[];deliveries=[];
+  const distKm=routeD(route).toFixed(1);
+  const timeMin=Math.round(parseFloat(distKm)*1.8); // ~33km/h avg Melbourne
 
-  drivers.forEach((driverN,di)=>{
-    const chunk=nodes.slice(di*chunkSize,(di+1)*chunkSize);
-    if(!chunk.length)return;
-    let route=nn(chunk,WAREHOUSE_COORDS);
-    route=twoOpt(route,WAREHOUSE_COORDS);
-    const distKm=routeDist(route,WAREHOUSE_COORDS).toFixed(1);
-    const stops=route.map(node=>({
-      ...arr[node.idx],_lat:node.lat,_lng:node.lng,_ok:node.ok,
-      driverIdx:di,driverName:driverN,photos:[],done:false,cashCollected:null
-    }));
-    vrpRoutes.push({driverName:driverN,driverIdx:di,stops,distKm,timeMin:Math.round(parseFloat(distKm)*2)});
-    stops.forEach(s=>deliveries.push(s));
-  });
+  // Single driver
+  vrpRoutes=[{
+    driverName:drivers[0],driverIdx:0,
+    stops:route.map(n=>({
+      ...arr[n.idx],_lat:n.lat,_lng:n.lng,_ok:n.ok,
+      driverIdx:0,driverName:drivers[0],
+      photos:[],done:false,cashCollected:null
+    })),
+    distKm,timeMin
+  }];
+  deliveries=vrpRoutes[0].stops;
   renderRouteResult(arr.length);
 }
 
@@ -854,7 +921,6 @@ function renderRouteResult(total){
     </button>`).join('');
 
   renderRouteTable(activeRouteTab);
-  renderMap();
   document.getElementById('routeCard').style.display='block';
 
   const method=getOrsKey()?'ORS VRP (Vroom)':'本地2-opt';
@@ -893,78 +959,6 @@ function renderRouteTable(dIdx){
   document.getElementById('tableWrap').innerHTML=html;
 }
 
-// ═══════════════════════════════════════
-// LEAFLET MAP (dynamic load — never blocks app)
-// ═══════════════════════════════════════
-function loadLeaflet(){
-  return new Promise((resolve)=>{
-    // Already loaded
-    if(window.L){resolve(true);return;}
-    // Try unpkg first, then jsdelivr as fallback
-    const tryLoad=(urls,idx)=>{
-      if(idx>=urls.length){resolve(false);return;}
-      const s=document.createElement('script');
-      s.src=urls[idx];
-      s.onload=()=>resolve(true);
-      s.onerror=()=>tryLoad(urls,idx+1);
-      document.head.appendChild(s);
-    };
-    tryLoad([
-      'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
-      'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.min.js'
-    ],0);
-  });
-}
-
-async function renderMap(){
-  const mapEl=document.getElementById('routeMap');
-  if(leafletMap){leafletMap.remove();leafletMap=null;}
-
-  const ok=await loadLeaflet();
-  if(!ok){
-    // Show a simple text fallback — don't crash
-    mapEl.innerHTML=`<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--mut);font-size:13px;flex-direction:column;gap:8px">
-      <div style="font-size:24px">🗺️</div>
-      <div>地图加载失败（网络限制），路线优化不受影响</div>
-      <button class="btn btn-secondary btn-sm" onclick="renderMap()">重试加载地图</button>
-    </div>`;
-    mapEl.style.display='flex';
-    return;
-  }
-
-  mapEl.style.display='block';
-  leafletMap=L.map('routeMap',{zoomControl:true});
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{
-    attribution:'© OpenStreetMap © CARTO',maxZoom:19
-  }).addTo(leafletMap);
-
-  // Warehouse marker
-  const whIcon=L.divIcon({
-    html:'<div style="background:#fff;color:#0f1117;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;border:2px solid #4f8ef7">🏠</div>',
-    iconSize:[28,28],className:''
-  });
-  L.marker(WAREHOUSE_LL,{icon:whIcon}).bindPopup('公司 · 出发/返回点').addTo(leafletMap);
-
-  const allLL=[WAREHOUSE_LL];
-
-  vrpRoutes.forEach((route,di)=>{
-    const color=DRIVER_COLORS[di%DRIVER_COLORS.length];
-    const pathLL=[WAREHOUSE_LL];
-    route.stops.forEach((stop,si)=>{
-      const ll=[stop._lat,stop._lng];
-      allLL.push(ll);pathLL.push(ll);
-      const icon=L.divIcon({
-        html:`<div style="background:${color};color:${di<2?'#fff':'#0f1117'};width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;border:2px solid #fff">${si+1}</div>`,
-        iconSize:[24,24],className:''
-      });
-      L.marker(ll,{icon}).bindPopup(`<b>${stop.name}</b><br>${stop.address}<br>司机：${route.driverName}`).addTo(leafletMap);
-    });
-    pathLL.push(WAREHOUSE_LL);
-    L.polyline(pathLL,{color,weight:3,opacity:.8}).addTo(leafletMap);
-  });
-
-  leafletMap.fitBounds(L.latLngBounds(allLL),{padding:[20,20]});
-}
 
 // ═══════════════════════════════════════
 // NAVIGATION
@@ -1265,7 +1259,6 @@ function clearPlan(){
   document.getElementById('imgParseBtn').disabled=true;
   document.getElementById('routeCard').style.display='none';
   document.getElementById('tableWrap').innerHTML='';
-  if(leafletMap){leafletMap.remove();leafletMap=null;}
   currentSession=null;
   setStatus('idle','请录入客户信息...');
 }
