@@ -142,8 +142,8 @@ tr:hover td{background:rgba(255,255,255,.02);}
     <h2>司机登录</h2>
     <p>输入您的姓名才能开始使用。<br>每次送货记录与您的名字绑定。</p>
     <input type="text" id="driverNameInput" placeholder="输入司机姓名" maxlength="20"
-      oninput="checkDriverName()" onkeydown="if(event.key==='Enter')confirmDriver()">
-    <button class="btn btn-primary btn-full" id="driverConfirmBtn" onclick="confirmDriver()" disabled>确认并进入 &rarr;</button>
+      oninput="checkDriverName()" onkeyup="checkDriverName()" onchange="checkDriverName()" onkeydown="if(event.key==='Enter')confirmDriver()">
+    <button class="btn btn-primary btn-full" id="driverConfirmBtn" onclick="confirmDriver()">确认并进入 &rarr;</button>
   </div>
 </div>
 
@@ -385,20 +385,22 @@ let manualEntries=[];
 
 function openDB(){
   return new Promise((res,rej)=>{
-    const req=indexedDB.open('huanqiu_v4',1);
-    req.onupgradeneeded=e=>{
-      const d=e.target.result;
-      if(!d.objectStoreNames.contains('sessions'))
-        d.createObjectStore('sessions',{keyPath:'id',autoIncrement:true});
-    };
-    req.onsuccess=e=>{db=e.target.result;res(db);};
-    req.onerror=()=>rej(req.error);
+    try{
+      const req=indexedDB.open('huanqiu_v4',1);
+      req.onupgradeneeded=e=>{
+        const d=e.target.result;
+        if(!d.objectStoreNames.contains('sessions'))
+          d.createObjectStore('sessions',{keyPath:'id',autoIncrement:true});
+      };
+      req.onsuccess=e=>{db=e.target.result;res(db);};
+      req.onerror=()=>{db=null;res(null);};
+    }catch(e){db=null;res(null);}
   });
 }
 const dbStore=(m)=>db.transaction('sessions',m).objectStore('sessions');
-const dbSave=(s)=>new Promise((res,rej)=>{const r=dbStore('readwrite').add(s);r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);});
-const dbPut=(s)=>new Promise((res,rej)=>{const r=dbStore('readwrite').put(s);r.onsuccess=()=>res();r.onerror=()=>rej(r.error);});
-const dbAll=()=>new Promise((res,rej)=>{const r=dbStore('readonly').getAll();r.onsuccess=()=>res([...r.result].reverse());r.onerror=()=>rej(r.error);});
+const dbSave=(s)=>new Promise((res,rej)=>{if(!db)return res(null);try{const r=dbStore('readwrite').add(s);r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);}catch(e){res(null);}});
+const dbPut=(s)=>new Promise((res,rej)=>{if(!db)return res();try{const r=dbStore('readwrite').put(s);r.onsuccess=()=>res();r.onerror=()=>rej(r.error);}catch(e){res();}});
+const dbAll=()=>new Promise((res,rej)=>{if(!db)return res([]);try{const r=dbStore('readonly').getAll();r.onsuccess=()=>res([...r.result].reverse());r.onerror=()=>rej(r.error);}catch(e){res([]);}});
 
 function checkDriverName(){
   document.getElementById('driverConfirmBtn').disabled=
@@ -406,7 +408,7 @@ function checkDriverName(){
 }
 function confirmDriver(){
   const v=document.getElementById('driverNameInput').value.trim();
-  if(v.length<2)return;
+  if(!v)return showToast('请输入司机姓名','err');
   driverName=v;
   localStorage.setItem('driverName',v);
   document.getElementById('driverGate').classList.add('hidden');
