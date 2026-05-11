@@ -193,7 +193,7 @@ tr.drag-over td{background:rgba(79,142,247,.1);}
 <!-- ══ HEADER ══ -->
 <div class="app-header">
   <span style="font-size:20px">🚚</span>
-  <div><div class="app-title">环球伙拼送货</div><div class="app-sub">v9 · Gemini免费引擎</div></div>
+  <div><div class="app-title">环球伙拼送货</div><div class="app-sub">v9 · OpenRouter免费引擎</div></div>
   <div class="header-right">
     <div class="driver-chip" onclick="changeDriver()" id="driverChip" style="display:none">
       👤 <span id="driverChipName"></span>
@@ -205,18 +205,29 @@ tr.drag-over td{background:rgba(79,142,247,.1);}
 <div class="page active" id="page-plan">
 
   <!-- ORS API Key setup -->
-  <!-- Claude API Key — required -->
+  <!-- AI API Key — required -->
   <div style="padding:10px 12px 0;flex-shrink:0">
     <div style="background:rgba(79,142,247,.08);border:1px solid rgba(79,142,247,.3);border-radius:8px;padding:12px 14px;">
-      <div style="font-size:12px;color:var(--accent);font-weight:700;margin-bottom:8px">🤖 Gemini API Key（必填 · 完全免费）</div>
+      <div style="font-size:12px;color:var(--accent);font-weight:700;margin-bottom:8px">🤖 AI API Key（必填 · 完全免费）</div>
+      <!-- Provider selector -->
+      <div style="display:flex;gap:6px;margin-bottom:10px">
+        <button id="btn-openrouter" onclick="setProvider('openrouter')"
+          style="flex:1;padding:6px;border-radius:6px;border:1px solid var(--accent);background:var(--accent);color:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">
+          OpenRouter（推荐）
+        </button>
+        <button id="btn-gemini" onclick="setProvider('gemini')"
+          style="flex:1;padding:6px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--mut);font-size:12px;cursor:pointer;font-family:inherit">
+          Google Gemini
+        </button>
+      </div>
       <div style="display:flex;gap:8px">
-        <input type="password" id="claudeKey" placeholder="AIzaSy..." oninput="saveClaudeKey()"
+        <input type="password" id="claudeKey" placeholder="sk-or-v1-..." oninput="saveClaudeKey()"
           style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12px;padding:8px 10px;outline:none;font-family:inherit;transition:border-color .2s"
           onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='var(--border)'">
         <button class="btn btn-secondary btn-sm" onclick="toggleClaudeKeyVisibility()">👁</button>
       </div>
-      <div style="font-size:11px;color:var(--mut);margin-top:6px;line-height:1.6">
-        在 <a href="https://aistudio.google.com/apikey" target="_blank" style="color:var(--accent)">aistudio.google.com/apikey</a> 免费获取（每天1500次，无需信用卡）。Key 仅存本地。<br>
+      <div style="font-size:11px;color:var(--mut);margin-top:6px;line-height:1.7" id="apiKeyHint">
+        免费注册：<a href="https://openrouter.ai/keys" target="_blank" style="color:var(--accent)">openrouter.ai/keys</a>（无需信用卡，Key格式：sk-or-...）<br>
         <span id="claudeKeyStatus"></span>
       </div>
     </div>
@@ -398,17 +409,38 @@ const dbAll=()=>new Promise((res,rej)=>{const r=dbStore('readonly').getAll();r.o
 // ═══════════════════════════════════════
 // ORS KEY
 // ═══════════════════════════════════════
+function setProvider(p){
+  localStorage.setItem('apiProvider', p);
+  const hints = {
+    openrouter: {placeholder:'sk-or-v1-...', link:'openrouter.ai/keys', url:'https://openrouter.ai/keys', text:'免费注册：'},
+    gemini:     {placeholder:'AIzaSy...', link:'aistudio.google.com/apikey', url:'https://aistudio.google.com/apikey', text:'免费获取：'}
+  };
+  const h = hints[p];
+  document.getElementById('claudeKey').placeholder = h.placeholder;
+  document.getElementById('apiKeyHint').innerHTML =
+    `${h.text}<a href="${h.url}" target="_blank" style="color:var(--accent)">${h.link}</a><br><span id="claudeKeyStatus"></span>`;
+  // Update button styles
+  ['openrouter','gemini'].forEach(id=>{
+    const btn=document.getElementById('btn-'+id);
+    if(btn){
+      const active=id===p;
+      btn.style.background=active?'var(--accent)':'var(--surface2)';
+      btn.style.color=active?'#fff':'var(--mut)';
+      btn.style.borderColor=active?'var(--accent)':'var(--border)';
+      btn.style.fontWeight=active?'600':'normal';
+    }
+  });
+}
 function getClaudeKey(){ return localStorage.getItem('claudeKey')||''; }
 function saveClaudeKey(){
   const k=document.getElementById('claudeKey').value.trim();
   localStorage.setItem('claudeKey',k);
   const status=document.getElementById('claudeKeyStatus');
-  if(status) status.textContent = k ? '✓ Key 已保存' : '';
-  if(status) status.style.color = 'var(--green)';
+  if(status){status.textContent=k?'✓ Key 已保存':'';status.style.color='var(--green)';}
 }
 function toggleClaudeKeyVisibility(){
   const el=document.getElementById('claudeKey');
-  el.type = el.type==='password' ? 'text' : 'password';
+  el.type=el.type==='password'?'text':'password';
 }
 function getOrsKey(){ return localStorage.getItem('orsKey')||''; }
 function saveOrsKey(){
@@ -555,53 +587,92 @@ dz.addEventListener('drop',e=>{
 });
 
 // ═══════════════════════════════════════
-// GEMINI API — free tier, 1500 req/day
+// AI API — OpenRouter (free) or Gemini
 // ═══════════════════════════════════════
 const SYSTEM=`你是澳洲墨尔本送货信息提取助手。只返回JSON数组，无其他文字：
 [{"name":"姓名","packages":件数,"address":"完整地址含suburb如25 Smith Rd Box Hill VIC","phone":"电话","timeSlot":"时间","cash":true或false,"note":"备注或空字符串"}]
 cash=true=需收现金。地址必须含suburb和VIC。`;
 
+function getApiProvider(){
+  return localStorage.getItem('apiProvider')||'openrouter';
+}
+
 async function callClaude(messages, systemOverride){
   const apiKey = getClaudeKey();
-  if(!apiKey) throw new Error('请先填入 Gemini API Key');
+  if(!apiKey) throw new Error('请先填入 API Key');
+  const provider = getApiProvider();
 
-  // Convert from Anthropic message format to Gemini format
+  if(provider === 'gemini'){
+    return callGemini(messages, systemOverride, apiKey);
+  } else {
+    return callOpenRouter(messages, systemOverride, apiKey);
+  }
+}
+
+async function callOpenRouter(messages, systemOverride, apiKey){
+  const system = systemOverride || SYSTEM;
+  // Convert image blocks to OpenRouter format
+  const convertedMessages = messages.map(msg => {
+    if(typeof msg.content === 'string') return msg;
+    const parts = msg.content.map(block => {
+      if(block.type==='text') return {type:'text', text:block.text};
+      if(block.type==='image') return {
+        type:'image_url',
+        image_url:{url:`data:${block.source.media_type};base64,${block.source.data}`}
+      };
+      return block;
+    });
+    return {role:msg.role, content:parts};
+  });
+
+  const r = await fetch('https://openrouter.ai/api/v1/chat/completions',{
+    method:'POST',
+    headers:{
+      'Content-Type':'application/json',
+      'Authorization':'Bearer '+apiKey,
+      'HTTP-Referer':'https://cgwhx1172721-dotcom.github.io',
+      'X-Title':'环球伙拼送货排班'
+    },
+    body:JSON.stringify({
+      model:'google/gemini-2.0-flash-exp:free',
+      messages:[{role:'system',content:system},...convertedMessages],
+      temperature:0.1,
+      max_tokens:3000
+    })
+  });
+  if(!r.ok){
+    const err=await r.json().catch(()=>({}));
+    throw new Error(err.error?.message||'OpenRouter '+r.status);
+  }
+  const d=await r.json();
+  return d.choices?.[0]?.message?.content||'';
+}
+
+async function callGemini(messages, systemOverride, apiKey){
   const system = systemOverride || SYSTEM;
   const parts = [];
-
   for(const msg of messages){
     if(typeof msg.content === 'string'){
       parts.push({text: msg.content});
     } else if(Array.isArray(msg.content)){
       for(const block of msg.content){
         if(block.type==='text') parts.push({text: block.text});
-        if(block.type==='image'){
-          parts.push({
-            inline_data:{
-              mime_type: block.source.media_type,
-              data: block.source.data
-            }
-          });
-        }
+        if(block.type==='image') parts.push({
+          inline_data:{mime_type:block.source.media_type, data:block.source.data}
+        });
       }
     }
   }
-
-  const body = {
-    system_instruction:{parts:[{text: system}]},
-    contents:[{role:'user', parts}],
-    generationConfig:{temperature:0.1, maxOutputTokens:3000}
+  const body={
+    system_instruction:{parts:[{text:system}]},
+    contents:[{role:'user',parts}],
+    generationConfig:{temperature:0.1,maxOutputTokens:3000}
   };
-
   const url=`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
-  const r=await fetch(url,{
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify(body)
-  });
+  const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   if(!r.ok){
     const err=await r.json().catch(()=>({}));
-    throw new Error(err.error?.message||'Gemini API '+r.status);
+    throw new Error(err.error?.message||'Gemini '+r.status);
   }
   const d=await r.json();
   return d.candidates?.[0]?.content?.parts?.map(p=>p.text||'').join('')||'';
@@ -1311,6 +1382,10 @@ function showToast(msg,type){
 (async()=>{
   await openDB();
   document.getElementById('deliveryDate').value=new Date().toISOString().split('T')[0];
+
+  // Restore provider selection
+  const savedProvider = localStorage.getItem('apiProvider')||'openrouter';
+  setProvider(savedProvider);
 
   // Restore Claude key
   const savedClaude=getClaudeKey();
