@@ -533,12 +533,25 @@ const SYSTEM=`你是澳洲墨尔本送货信息提取助手。只返回JSON数�
 [{"name":"姓名","packages":件数,"address":"完整地址含suburb如25 Smith Rd Box Hill VIC","phone":"电话","timeSlot":"时间","cash":true或false,"note":"备注或空字符串"}]
 cash=true=需收现金。地址必须含suburb和VIC。`;
 
-async function callClaude(messages){
+async function callClaude(messages, systemOverride){
   const r=await fetch('https://api.anthropic.com/v1/messages',{
-    method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:3000,system:SYSTEM,messages})
+    method:'POST',
+    headers:{
+      'Content-Type':'application/json',
+      'anthropic-version':'2023-06-01',
+      'anthropic-dangerous-direct-browser-access':'true'
+    },
+    body:JSON.stringify({
+      model:'claude-sonnet-4-20250514',
+      max_tokens:3000,
+      system: systemOverride || SYSTEM,
+      messages
+    })
   });
-  if(!r.ok)throw new Error('Claude API '+r.status);
+  if(!r.ok){
+    const err=await r.json().catch(()=>({}));
+    throw new Error(err.error?.message||'Claude API '+r.status);
+  }
   const d=await r.json();
   return d.content.map(b=>b.text||'').join('');
 }
@@ -603,7 +616,8 @@ Return ONLY a JSON array, no other text:
 Addresses:
 ${JSON.stringify(addresses)}`;
   try{
-    const txt=await callClaude([{role:'user',content:prompt}]);
+    const txt=await callClaude([{role:'user',content:prompt}],
+      'You are a geocoding assistant. Return only JSON, no other text.');
     const list=parseJSON(txt);
     const map={};
     list.forEach(item=>{ map[item.address]={lat:item.lat,lng:item.lng,ok:true}; });
@@ -691,7 +705,11 @@ async function runOrsVRP(arr,coords,key){
   try{
     const claudeResp=await fetch('https://api.anthropic.com/v1/messages',{
       method:'POST',
-      headers:{'Content-Type':'application/json'},
+      headers:{
+        'Content-Type':'application/json',
+        'anthropic-version':'2023-06-01',
+        'anthropic-dangerous-direct-browser-access':'true'
+      },
       body:JSON.stringify({
         model:'claude-sonnet-4-20250514',
         max_tokens:4096,
@@ -823,7 +841,8 @@ Consider actual Melbourne road network, not just straight lines.
 Return ONLY a JSON array of stop IDs in optimal visit order, e.g.: [3,0,7,2,...]
 No explanation, just the array.`;
 
-    const txt=await callClaude([{role:'user',content:prompt}]);
+    const txt=await callClaude([{role:'user',content:prompt}],
+      'You are a route optimization expert. Return only a JSON array of integers, no explanation.');
     // Robustly extract JSON array from response
     const clean=txt.replace(/```json|```/g,'').trim();
     const match=clean.match(/\[[\d,\s]+\]/);
