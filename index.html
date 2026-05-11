@@ -1,894 +1,1206 @@
 <!DOCTYPE html>
-<html lang="zh">
+<html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>RoyalTea 送货排班</title>
-<meta name="version" content="20260506030508">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="version" content="20260511_v8_vrp">
+<meta name="theme-color" content="#0f1117">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="环球伙拼送货">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" id="manifestLink" href="manifest.json">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<title>环球伙拼 · 送货排班</title>
 <style>
-@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;600;700;800&display=swap');
-:root{--bg:#0c0c0c;--s1:#161616;--s2:#1e1e1e;--s3:#252525;--bd:#2a2a2a;--acc:#f5c518;--txt:#ede9e0;--mut:#5a5a5a;--grn:#3ecf6e;--red:#e05252;--blu:#3b82f6;}
-*{box-sizing:border-box;margin:0;padding:0}
-body{background:var(--bg);color:var(--txt);font-family:'Syne',sans-serif;min-height:100vh;padding:20px 16px}
-input,textarea{color-scheme:dark}
+:root {
+  --bg:#0f1117; --surface:#1a1d27; --surface2:#22263a; --border:#2e3250;
+  --accent:#4f8ef7; --green:#38c9a0; --red:#f76b6b; --yellow:#f7c94f;
+  --text:#e8eaf6; --mut:#7b82a8; --radius:10px;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+html,body{height:100%;overflow:hidden;}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,'PingFang SC','SF Pro Text',sans-serif;font-size:14px;display:flex;flex-direction:column;}
 
-header{display:flex;align-items:center;gap:14px;margin-bottom:28px;padding-bottom:18px;border-bottom:1px solid var(--bd)}
-.logo{width:42px;height:42px;background:var(--acc);border-radius:10px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:18px;color:#000;flex-shrink:0}
-h1{font-size:18px;font-weight:800}.h1-acc{color:var(--acc)}
-.sub{font-size:11px;color:var(--mut);font-family:'DM Mono',monospace;margin-top:2px}
+/* ── Shell ── */
+.app-header{background:var(--surface);border-bottom:1px solid var(--border);padding:12px 16px;display:flex;align-items:center;gap:10px;flex-shrink:0;padding-top:max(12px,env(safe-area-inset-top));}
+.app-title{font-size:15px;font-weight:700;}
+.app-sub{font-size:11px;color:var(--mut);}
+.header-right{margin-left:auto;}
+.bottom-nav{background:var(--surface);border-top:1px solid var(--border);display:flex;flex-shrink:0;padding-bottom:env(safe-area-inset-bottom);}
+.nav-item{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:10px 4px 8px;cursor:pointer;border:none;background:none;color:var(--mut);font-size:11px;transition:color .2s;font-family:inherit;}
+.nav-item .ni{font-size:20px;line-height:1;}
+.nav-item.active{color:var(--accent);}
+.page{display:none;flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;}
+.page.active{display:flex;flex-direction:column;}
 
-.grid{display:grid;grid-template-columns:1fr 1.4fr;gap:18px;align-items:start}
-@media(max-width:860px){.grid{grid-template-columns:1fr}}
-.panel{background:var(--s1);border:1px solid var(--bd);border-radius:12px;padding:18px;display:flex;flex-direction:column;gap:14px}
-.label{font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--mut);display:flex;align-items:center;gap:6px;margin-bottom:6px}
-.ld{width:5px;height:5px;border-radius:50%;background:var(--acc);display:inline-block}
+/* ── Modal ── */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:200;display:flex;align-items:center;justify-content:center;padding:20px;}
+.modal-overlay.hidden{display:none;}
+.modal{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:28px 24px;width:100%;max-width:380px;text-align:center;}
+.modal h2{font-size:20px;margin-bottom:8px;}
+.modal p{color:var(--mut);font-size:13px;margin-bottom:20px;line-height:1.6;}
+.modal input{width:100%;background:var(--surface2);border:2px solid var(--border);border-radius:10px;color:var(--text);font-size:18px;padding:14px 16px;outline:none;text-align:center;font-family:inherit;margin-bottom:14px;transition:border-color .2s;}
+.modal input:focus{border-color:var(--accent);}
 
-textarea,input[type=date]{width:100%;background:var(--s2);border:1px solid var(--bd);border-radius:8px;color:var(--txt);font-family:'DM Mono',monospace;font-size:12px;padding:12px 14px;outline:none;transition:border-color .2s}
-textarea:focus,input[type=date]:focus{border-color:var(--acc)}
-#rawInput{height:200px;resize:vertical;line-height:1.7}
-#driverNote{height:70px;resize:none}
+/* ── ORS Key setup ── */
+.key-setup{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin:12px;flex-shrink:0;}
+.key-setup label{font-size:12px;color:var(--mut);margin-bottom:5px;}
+.key-row{display:flex;gap:8px;}
+.key-row input{flex:1;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;padding:9px 12px;outline:none;font-family:inherit;}
+.key-row input:focus{border-color:var(--accent);}
+.key-hint{font-size:11px;color:var(--mut);margin-top:6px;line-height:1.5;}
+.key-hint a{color:var(--accent);}
 
-.btn{display:inline-flex;align-items:center;gap:7px;padding:11px 20px;border-radius:7px;font-family:'Syne',sans-serif;font-weight:700;font-size:13px;cursor:pointer;border:none;transition:all .15s}
-.btn:hover{filter:brightness(1.1);transform:translateY(-1px)}
-.btn:active{transform:translateY(0)}
-.btn:disabled{opacity:.4;cursor:not-allowed;filter:none;transform:none}
-.btn-acc{background:var(--acc);color:#000;width:100%;justify-content:center;font-size:14px;padding:13px}
-.btn-grn{background:var(--grn);color:#fff}
-.btn-blu{background:var(--blu);color:#fff}
-.btn-ghost{background:var(--s2);color:var(--txt);border:1px solid var(--bd)}
-.btn-ghost:hover{border-color:var(--acc);color:var(--acc)}
-.btn-sm{padding:7px 14px;font-size:12px}
-.btn-orange{background:#ff6b35;color:#fff}
+/* ── Cards ── */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:10px;}
+.card-header{padding:11px 14px;display:flex;align-items:center;gap:10px;background:var(--surface2);border-bottom:1px solid var(--border);}
 
-.status{background:var(--s2);border:1px solid var(--bd);border-radius:7px;padding:9px 14px;font-family:'DM Mono',monospace;font-size:12px;color:var(--mut);display:flex;align-items:center;gap:8px;min-height:40px}
-.status.ok{color:var(--grn)}.status.err{color:var(--red)}.status.busy{color:var(--acc)}
-.spin{width:12px;height:12px;border:2px solid var(--bd);border-top-color:var(--acc);border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0}
-@keyframes spin{to{transform:rotate(360deg)}}
+/* ── Drivers config ── */
+.drivers-row{display:flex;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border);align-items:center;flex-wrap:wrap;}
+.driver-tag{background:rgba(79,142,247,.15);border:1px solid rgba(79,142,247,.3);color:var(--accent);border-radius:20px;padding:5px 12px;font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px;}
+.driver-tag .rm{cursor:pointer;opacity:.6;font-size:16px;line-height:1;}
+.driver-tag .rm:hover{opacity:1;}
+.add-driver-input{background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;padding:7px 12px;outline:none;font-family:inherit;width:130px;}
+.add-driver-input:focus{border-color:var(--accent);}
 
-.pill{display:inline-block;padding:2px 10px;border-radius:20px;font-size:11px;font-family:'DM Mono',monospace;white-space:nowrap}
-.pill-dim{background:#ffffff0f;border:1px solid var(--bd);color:var(--txt)}
-.pill-acc{background:#f5c51820;border:1px solid #f5c51840;color:var(--acc)}
-.pill-grn{background:#3ecf6e18;border:1px solid #3ecf6e40;color:var(--grn)}
-.pill-mut{background:#5a5a5a18;border:1px solid var(--bd);color:var(--mut)}
+/* ── Input tabs ── */
+.input-tabs{display:flex;background:var(--surface2);border-bottom:1px solid var(--border);}
+.tab-btn{flex:1;padding:11px 6px;background:none;border:none;border-bottom:2px solid transparent;color:var(--mut);font-size:12px;cursor:pointer;transition:all .2s;display:flex;align-items:center;justify-content:center;gap:4px;font-family:inherit;}
+.tab-btn.active{color:var(--accent);border-bottom-color:var(--accent);background:rgba(79,142,247,.05);}
+.tab-pane{display:none;padding:14px;}
+.tab-pane.active{display:block;}
+textarea,input[type=text],input[type=url],input[type=date],input[type=number]{background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;padding:10px 12px;outline:none;font-family:inherit;transition:border-color .2s;}
+textarea{width:100%;resize:vertical;}
+input[type=text]:focus,input[type=date]:focus{border-color:var(--accent);}
+label{display:block;font-size:12px;color:var(--mut);margin-bottom:5px;}
+.drop-zone{border:2px dashed var(--border);border-radius:8px;padding:24px 16px;text-align:center;cursor:pointer;transition:all .2s;position:relative;}
+.drop-zone:hover,.drop-zone.drag-over{border-color:var(--accent);background:rgba(79,142,247,.05);}
+.drop-zone input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;}
+#imgPreview{max-width:100%;max-height:180px;border-radius:6px;margin-top:10px;display:none;}
 
-.tbl-wrap{background:var(--s1);border:1px solid var(--bd);border-radius:12px;overflow:hidden;overflow-x:auto}
-table{width:100%;border-collapse:collapse;font-size:12px}
-th{padding:9px 10px;text-align:left;font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--mut);white-space:nowrap;border-bottom:1px solid var(--bd)}
-td{padding:10px 10px;border-bottom:1px solid #1a1a1a;vertical-align:middle}
-tr:last-child td{border-bottom:none}
-tbody tr:hover td{background:#f5c51806}
-.num-circle{width:26px;height:26px;background:var(--acc);color:#000;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:11px;flex-shrink:0}
-.drag-handle{cursor:grab;color:var(--mut);user-select:none;font-size:16px;padding:0 2px}
-.note-in{background:transparent;border:none;color:var(--mut);font-family:'DM Mono',monospace;font-size:11px;width:100%;outline:none;min-width:70px}
-.note-in:focus{color:var(--txt)}
-tfoot tr td{border-top:2px solid var(--bd);font-weight:700;color:var(--acc);font-family:'Syne',sans-serif;background:#f5c51806}
-.action-bar{display:flex;gap:8px;flex-wrap:wrap}
-.tel-link{color:var(--blu);text-decoration:none;font-family:'DM Mono',monospace;font-size:12px;font-weight:600}
-.tel-link:hover{text-decoration:underline}
-.empty{text-align:center;padding:60px 20px;color:var(--mut);font-family:'DM Mono',monospace;font-size:12px;line-height:2}
-.empty-icon{font-size:38px;opacity:.3;margin-bottom:12px}
+/* ── Buttons ── */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:11px 18px;border-radius:10px;border:none;font-size:14px;font-weight:600;cursor:pointer;transition:all .18s;white-space:nowrap;font-family:inherit;}
+.btn:disabled{opacity:.4;cursor:not-allowed;}
+.btn-primary{background:var(--accent);color:#fff;}
+.btn-primary:hover:not(:disabled){background:#3a7af0;}
+.btn-green{background:var(--green);color:#0f1117;}
+.btn-green:hover:not(:disabled){background:#2db890;}
+.btn-secondary{background:var(--surface2);border:1px solid var(--border);color:var(--text);}
+.btn-danger{background:rgba(247,107,107,.12);color:var(--red);border:1px solid rgba(247,107,107,.3);}
+.btn-full{width:100%;margin-top:10px;}
+.btn-sm{padding:7px 12px;font-size:12px;}
 
-/* ── Share modal ── */
-#shareModal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.87);z-index:999;align-items:center;justify-content:center;padding:16px}
-#shareModal.open{display:flex}
-.share-box{background:var(--s1);border:1px solid var(--bd);border-radius:16px;width:100%;max-width:520px;overflow:hidden}
-.share-head{padding:16px 20px;border-bottom:1px solid var(--bd);display:flex;align-items:center;justify-content:space-between}
-.share-body{padding:20px;display:flex;flex-direction:column;gap:14px}
-.url-box{background:var(--s2);border:1px solid var(--bd);border-radius:8px;padding:12px 14px;font-family:'DM Mono',monospace;font-size:11px;color:var(--mut);word-break:break-all;line-height:1.6;max-height:90px;overflow-y:auto;user-select:all;cursor:text}
-.url-box.ready{color:var(--txt);border-color:#f5c51840}
-.share-hint{font-size:12px;color:var(--mut);line-height:1.7;font-family:'DM Mono',monospace}
-.share-hint b{color:var(--txt)}
-.share-btns{display:flex;gap:10px}
-.share-btns .btn{flex:1;justify-content:center}
-.modal-close{background:none;border:none;color:var(--mut);cursor:pointer;font-size:22px;line-height:1;padding:0}
+/* ── Status ── */
+.status-bar{padding:10px 14px;font-size:12px;color:var(--mut);border-top:1px solid var(--border);display:flex;align-items:center;gap:6px;min-height:38px;}
+.spinner{width:12px;height:12px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .6s linear infinite;flex-shrink:0;}
+@keyframes spin{to{transform:rotate(360deg);}}
+
+/* ── Result ── */
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid var(--border);}
+.stat-pill{background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:4px 12px;font-size:12px;color:var(--mut);}
+.stat-pill b{color:var(--text);}
+.driver-route-tab{display:flex;gap:0;border-bottom:1px solid var(--border);overflow-x:auto;}
+.drt{padding:9px 16px;background:none;border:none;border-bottom:2px solid transparent;color:var(--mut);font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;font-family:inherit;transition:all .2s;}
+.drt.active{color:var(--accent);border-bottom-color:var(--accent);}
+.table-wrap{overflow-x:auto;}
+table{width:100%;border-collapse:collapse;font-size:13px;}
+th{background:var(--surface2);padding:9px 10px;text-align:left;font-size:10px;font-weight:700;color:var(--mut);text-transform:uppercase;letter-spacing:.6px;white-space:nowrap;}
+td{padding:9px 10px;border-bottom:1px solid var(--border);vertical-align:middle;}
+tr:hover td{background:rgba(255,255,255,.02);}
+tr[draggable=true]{cursor:grab;}
+tr.drag-over td{background:rgba(79,142,247,.1);}
+.seq-num{width:24px;height:24px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;}
+.cash-badge{background:rgba(247,201,79,.15);color:var(--yellow);border:1px solid rgba(247,201,79,.3);border-radius:4px;padding:2px 7px;font-size:11px;font-weight:600;}
+.nav-btn{background:rgba(79,142,247,.15);border:1px solid rgba(79,142,247,.3);color:var(--accent);border-radius:6px;padding:5px 10px;font-size:11px;cursor:pointer;font-family:inherit;font-weight:600;}
+.action-bar{padding:12px 14px;display:flex;gap:8px;flex-wrap:wrap;border-top:1px solid var(--border);}
+.empty-state{text-align:center;padding:50px 20px;color:var(--mut);}
+.empty-state .icon{font-size:36px;margin-bottom:10px;}
+
+/* ── Map ── */
+#routeMap{height:300px;border-top:1px solid var(--border);flex-shrink:0;}
+.leaflet-container{background:#1a1d27;}
 
 /* ── Driver mode ── */
-#driverView{display:none;max-width:480px;margin:0 auto;padding:16px 12px}
-.driver-header{display:flex;align-items:center;gap:12px;margin-bottom:20px}
-.progress-bar{height:4px;background:var(--s2);border-radius:99px;margin-bottom:20px;overflow:hidden}
-.progress-fill{height:100%;background:var(--grn);border-radius:99px;transition:width .4s}
-.stop-card{background:var(--s1);border:1px solid var(--bd);border-radius:12px;padding:14px 16px;cursor:pointer;transition:all .2s;display:flex;align-items:center;gap:12px;margin-bottom:8px}
-.stop-card.active{border-color:var(--acc);background:#f5c51810}
-.stop-card.done{opacity:.55;cursor:default}
-.stop-num{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;flex-shrink:0}
-.sn-p{background:var(--s2);color:var(--mut)}.sn-c{background:var(--acc);color:#000}.sn-d{background:var(--grn);color:#fff}
-.detail-card{background:var(--s1);border:1px solid #f5c51840;border-radius:16px;padding:20px;margin-bottom:14px}
-.detail-label{font-size:11px;color:var(--acc);font-family:'DM Mono',monospace;font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:10px}
-.detail-name{font-size:20px;font-weight:800;margin-bottom:4px}
-.detail-addr{font-size:13px;color:var(--mut);margin-bottom:14px;line-height:1.5}
-.detail-btns{display:flex;gap:8px;margin-bottom:14px}
-.all-done{text-align:center;padding:60px 20px}
+.driver-bar{background:linear-gradient(135deg,var(--accent),#7c5cf7);padding:14px 16px;display:flex;align-items:center;gap:10px;flex-shrink:0;}
+.driver-bar span{font-weight:700;font-size:14px;}
+.stop-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);margin:10px 14px;overflow:hidden;transition:opacity .3s;}
+.stop-card.done{opacity:.45;}
+.stop-header{padding:11px 14px;display:flex;align-items:center;gap:10px;background:var(--surface2);border-bottom:1px solid var(--border);}
+.stop-body{padding:12px 14px;}
+.stop-info{font-size:13px;color:var(--mut);line-height:2.2;}
+.stop-info b{color:var(--text);}
+.stop-actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;}
+.photo-area{margin-top:12px;border-top:1px solid var(--border);padding-top:12px;}
+.photo-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;}
+.photo-thumb{width:64px;height:64px;border-radius:8px;object-fit:cover;border:1px solid var(--border);cursor:pointer;}
+.photo-upload-btn{width:64px;height:64px;border:2px dashed var(--border);border-radius:8px;background:var(--surface2);display:flex;align-items:center;justify-content:center;font-size:22px;cursor:pointer;position:relative;transition:all .2s;color:var(--mut);}
+.photo-upload-btn:hover{border-color:var(--accent);color:var(--accent);}
+.photo-upload-btn input{position:absolute;inset:0;opacity:0;cursor:pointer;}
+.cash-input-area{margin-top:10px;padding:12px 14px;background:rgba(247,201,79,.07);border:1px solid rgba(247,201,79,.25);border-radius:8px;}
+.cash-input-area label{color:var(--yellow);font-size:12px;font-weight:600;margin-bottom:6px;}
+.cash-input-row{display:flex;align-items:center;gap:8px;}
+.cash-input-row span{font-size:16px;font-weight:700;color:var(--yellow);}
+.cash-amount-input{background:var(--surface2);border:1px solid rgba(247,201,79,.4);border-radius:8px;color:var(--yellow);font-size:18px;font-weight:700;padding:8px 12px;outline:none;width:130px;text-align:right;font-family:inherit;}
+.cash-amount-input:focus{border-color:var(--yellow);}
+.cash-saved-badge{font-size:12px;color:var(--yellow);opacity:.7;}
+.cash-summary{background:linear-gradient(135deg,rgba(247,201,79,.15),rgba(247,201,79,.05));border:1px solid rgba(247,201,79,.3);border-radius:var(--radius);margin:0 14px 14px;padding:14px 16px;display:flex;align-items:center;gap:12px;}
+.cash-summary-icon{font-size:28px;}
+.cash-summary-label{font-size:12px;color:var(--mut);}
+.cash-summary-amount{font-size:26px;font-weight:800;color:var(--yellow);line-height:1;}
+.cash-summary-detail{font-size:11px;color:var(--mut);margin-top:2px;}
 
-/* ── Photo modal ── */
-#photoModal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.87);z-index:1000;align-items:center;justify-content:center;padding:16px}
-#photoModal.open{display:flex}
-.modal-box{background:var(--s1);border:1px solid var(--bd);border-radius:16px;width:100%;max-width:440px;overflow:hidden}
-.modal-head{padding:16px 20px;border-bottom:1px solid var(--bd);display:flex;align-items:center;justify-content:space-between}
-.modal-body{padding:20px}
-.cam-area{background:var(--s2);border-radius:10px;overflow:hidden;aspect-ratio:4/3;position:relative;display:flex;align-items:center;justify-content:center;margin-bottom:14px}
-#camVideo{width:100%;height:100%;object-fit:cover;display:none}
-#photoPreview{width:100%;height:100%;object-fit:cover;display:none}
-.cam-ph{text-align:center;color:var(--mut);font-size:13px;line-height:2}
-.done-badge{position:absolute;top:10px;right:10px;background:#3ecf6ecc;border-radius:20px;padding:4px 10px;font-size:11px;font-weight:700;color:#fff}
-.modal-btns{display:flex;gap:10px}
-.modal-btns .btn{flex:1;justify-content:center}
+/* ── History ── */
+.history-item{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);margin:0 14px 10px;padding:14px;cursor:pointer;transition:border-color .2s;}
+.history-item:hover{border-color:var(--accent);}
+.history-date{font-size:13px;font-weight:700;}
+.history-meta{font-size:12px;color:var(--mut);margin-top:4px;line-height:1.8;}
+.history-tags{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;}
+.tag{background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:3px 10px;font-size:11px;color:var(--mut);}
+.detail-overlay{position:fixed;inset:0;background:var(--bg);z-index:50;overflow-y:auto;-webkit-overflow-scrolling:touch;display:none;}
+.detail-overlay.open{display:block;}
+.detail-header{background:var(--surface);border-bottom:1px solid var(--border);padding:14px 16px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:10;padding-top:max(14px,env(safe-area-inset-top));}
+.detail-stop{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);margin:10px 14px;padding:14px;}
+.detail-stop-meta{font-size:12px;color:var(--mut);line-height:2;margin-top:6px;}
+.detail-photos{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;}
+.detail-photo{width:80px;height:80px;object-fit:cover;border-radius:8px;border:1px solid var(--border);cursor:pointer;}
+.lightbox{position:fixed;inset:0;background:rgba(0,0,0,.93);z-index:300;display:none;align-items:center;justify-content:center;}
+.lightbox.open{display:flex;}
+.lightbox img{max-width:95vw;max-height:90vh;border-radius:8px;}
+.lightbox-close{position:absolute;top:20px;right:20px;font-size:32px;color:#fff;cursor:pointer;line-height:1;}
+.toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%) translateY(16px);background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:10px 20px;border-radius:8px;font-size:13px;opacity:0;transition:all .3s;pointer-events:none;z-index:400;white-space:nowrap;}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+.date-driver-row{padding:10px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;background:var(--surface);flex-shrink:0;}
+.driver-chip{background:rgba(79,142,247,.15);border:1px solid rgba(79,142,247,.3);color:var(--accent);border-radius:20px;padding:5px 14px;font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:5px;}
 
-#toast{position:fixed;bottom:24px;right:24px;background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:12px 18px;font-size:13px;box-shadow:0 8px 32px rgba(0,0,0,.5);transform:translateY(80px);opacity:0;transition:all .3s cubic-bezier(.34,1.56,.64,1);z-index:9999;display:flex;align-items:center;gap:10px;max-width:320px}
-#toast.show{transform:translateY(0);opacity:1}
-#toast.ok{border-color:#3ecf6e40}#toast.err{border-color:#e0525240}
+/* Route colors for multi-driver */
+.color-0{background:#4f8ef7;} .color-1{background:#38c9a0;} .color-2{background:#f7c94f;}
+.color-3{background:#f76b6b;} .color-4{background:#a78bfa;} .color-5{background:#fb923c;}
 </style>
 </head>
 <body>
 
-<!-- WeChat browser warning -->
-<div id="wxBanner" style="display:none;position:fixed;top:0;left:0;right:0;z-index:99999;background:#ff6b35;color:#fff;padding:12px 16px;font-size:13px;font-weight:700;text-align:center;line-height:1.5">
-  ⚠️ 请点右上角「···」→「在浏览器中打开」，否则导航无法使用
+<!-- ══ DRIVER GATE ══ -->
+<div class="modal-overlay" id="driverGate">
+  <div class="modal">
+    <div style="font-size:44px;margin-bottom:12px">🚚</div>
+    <h2>司机登录</h2>
+    <p>输入您的姓名才能开始使用。<br>每次送货记录与您的名字绑定。</p>
+    <input type="text" id="driverNameInput" placeholder="输入司机姓名" maxlength="20"
+      oninput="checkDriverName()" onkeydown="if(event.key==='Enter')confirmDriver()">
+    <button class="btn btn-primary btn-full" id="driverConfirmBtn" onclick="confirmDriver()" disabled>确认并进入 →</button>
+  </div>
 </div>
+
+<!-- ══ HEADER ══ -->
+<div class="app-header">
+  <span style="font-size:20px">🚚</span>
+  <div><div class="app-title">环球伙拼送货</div><div class="app-sub">v8 · VRP优化引擎</div></div>
+  <div class="header-right">
+    <div class="driver-chip" onclick="changeDriver()" id="driverChip" style="display:none">
+      👤 <span id="driverChipName"></span>
+    </div>
+  </div>
+</div>
+
+<!-- ══ PAGE: 排班 ══ -->
+<div class="page active" id="page-plan">
+
+  <!-- ORS API Key setup -->
+  <div class="key-setup" id="keySetup">
+    <label>🔑 OpenRouteService API Key（路线优化引擎）</label>
+    <div class="key-row">
+      <input type="text" id="orsKey" placeholder="输入 ORS API Key" oninput="saveOrsKey()">
+      <button class="btn btn-secondary btn-sm" onclick="testOrsKey()">测试</button>
+    </div>
+    <div class="key-hint">
+      免费注册获取：<a href="https://openrouteservice.org/dev/#/signup" target="_blank">openrouteservice.org</a>
+      （每天2000次免费，够用）<br>
+      <span id="keyStatus" style="color:var(--green)"></span>
+    </div>
+  </div>
+
+  <div class="date-driver-row" id="dateDriverRow" style="display:none">
+    <span style="font-size:12px;color:var(--mut)">📅</span>
+    <input type="date" id="deliveryDate" style="max-width:165px;flex:none">
+  </div>
+
+  <!-- Drivers config -->
+  <div class="card" style="margin:12px;flex-shrink:0" id="driversCard" style="display:none">
+    <div class="card-header">
+      <span class="seq-num color-0" style="color:#fff">👥</span>
+      <span style="font-weight:700">司机列表</span>
+      <span style="font-size:12px;color:var(--mut);margin-left:6px">（多司机自动分配路线）</span>
+    </div>
+    <div class="drivers-row" id="driverTagsRow"></div>
+    <div style="padding:8px 14px 12px;display:flex;gap:8px;align-items:center">
+      <input class="add-driver-input" type="text" id="newDriverInput" placeholder="添加司机姓名"
+        maxlength="20" onkeydown="if(event.key==='Enter')addDriver()">
+      <button class="btn btn-secondary btn-sm" onclick="addDriver()">＋ 添加</button>
+    </div>
+  </div>
+
+  <!-- Input -->
+  <div class="card" style="margin:0 12px 12px;flex-shrink:0">
+    <div class="card-header">
+      <span class="seq-num color-0" style="color:#fff">1</span>
+      <span style="font-weight:700">录入客户信息</span>
+    </div>
+    <div class="input-tabs">
+      <button class="tab-btn active" onclick="switchTab('text')" id="tab-text">📋 粘贴文字</button>
+      <button class="tab-btn" onclick="switchTab('image')" id="tab-image">📷 上传图片</button>
+    </div>
+    <div class="tab-pane active" id="pane-text">
+      <label>粘贴客户信息（任意格式均可）</label>
+      <textarea id="rawInput" rows="7" placeholder="例如：&#10;张三，3件，3 Oak St Doncaster，0412345678，下午2点，转账&#10;李四，2件，25 Smith Rd Box Hill，0423456789，下午3点，现金"></textarea>
+      <button class="btn btn-primary btn-full" id="parseTextBtn" onclick="doParseText()">✨ AI 解析 &amp; VRP 优化路线</button>
+    </div>
+    <div class="tab-pane" id="pane-image">
+      <label>上传截图（微信/WhatsApp/表格截图均可）</label>
+      <div class="drop-zone" id="dropZone">
+        <input type="file" id="imgFile" accept="image/*" onchange="handleImgSelect(this)">
+        <div style="font-size:28px;margin-bottom:6px">🖼️</div>
+        <div style="color:var(--mut);font-size:13px">点击选择图片 / 拖拽到此处</div>
+      </div>
+      <img id="imgPreview" alt="预览">
+      <button class="btn btn-primary btn-full" id="imgParseBtn" onclick="doParseImage()" disabled>🤖 AI 识别 &amp; VRP 优化路线</button>
+    </div>
+    <div class="status-bar" id="statusBar">请先完成司机登录...</div>
+  </div>
+
+  <!-- Route result -->
+  <div id="routeCard" style="margin:0 12px 12px;display:none">
+    <div class="card">
+      <div class="card-header">
+        <span class="seq-num color-1" style="color:#0f1117">2</span>
+        <span style="font-weight:700">VRP 最优路线</span>
+      </div>
+      <div class="toolbar">
+        <div class="stat-pill">共 <b id="statTotal">0</b> 单</div>
+        <div class="stat-pill"><b id="statPkgs">0</b> 件</div>
+        <div class="stat-pill">💰 现金 <b id="statCash">0</b> 单</div>
+        <div class="stat-pill">~<b id="statKm">0</b> km</div>
+        <div class="stat-pill">~<b id="statMin">0</b> 分钟</div>
+      </div>
+      <!-- per-driver tabs -->
+      <div class="driver-route-tab" id="driverRouteTabs"></div>
+      <div class="table-wrap" id="tableWrap"></div>
+      <!-- Map -->
+      <div id="routeMap"></div>
+      <div class="action-bar">
+        <button class="btn btn-green btn-sm" onclick="openAllMaps()">🗺 Google Maps 导航</button>
+        <button class="btn btn-primary btn-sm" onclick="startDelivery()">🚚 开始送货</button>
+        <button class="btn btn-secondary btn-sm" onclick="copyDriverSheet()">📋 复制表格</button>
+        <button class="btn btn-danger btn-sm" onclick="clearPlan()">✕ 清空</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ PAGE: 送货 ══ -->
+<div class="page" id="page-driver">
+  <div class="driver-bar" id="driverBar">
+    <span>🚚</span><span id="driverBarName">司机模式</span>
+    <span style="margin-left:auto;font-size:12px;opacity:.8" id="driverBarDate"></span>
+  </div>
+  <div id="driverStops" style="padding-bottom:20px"></div>
+</div>
+
+<!-- ══ PAGE: 历史 ══ -->
+<div class="page" id="page-history">
+  <div style="padding:14px 16px 8px;font-size:11px;font-weight:700;color:var(--mut);text-transform:uppercase;letter-spacing:.8px">📦 历史送货记录</div>
+  <div id="historyList" style="padding-bottom:20px"></div>
+</div>
+
+<!-- BOTTOM NAV -->
+<div class="bottom-nav">
+  <button class="nav-item active" onclick="switchPage('plan')" id="nav-plan"><span class="ni">📋</span>排班</button>
+  <button class="nav-item" onclick="switchPage('driver')" id="nav-driver"><span class="ni">🚚</span>送货</button>
+  <button class="nav-item" onclick="switchPage('history')" id="nav-history"><span class="ni">🕐</span>历史</button>
+</div>
+
+<!-- DETAIL OVERLAY -->
+<div class="detail-overlay" id="detailOverlay">
+  <div class="detail-header">
+    <button class="btn btn-secondary btn-sm" onclick="closeDetail()">← 返回</button>
+    <span style="font-weight:700;font-size:14px" id="detailTitle"></span>
+  </div>
+  <div id="detailContent" style="padding-bottom:40px"></div>
+</div>
+
+<!-- LIGHTBOX -->
+<div class="lightbox" id="lightbox" onclick="closeLightbox()">
+  <span class="lightbox-close">✕</span>
+  <img id="lightboxImg" src="" alt="">
+</div>
+<div class="toast" id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script>
-if(/MicroMessenger/i.test(navigator.userAgent)){
-  document.getElementById('wxBanner').style.display='block';
-  document.body.style.paddingTop='50px';
-}
-</script>
-
-<!-- ══ MANAGER VIEW ══ -->
-<div id="managerView">
-  <header>
-    <div class="logo">RT</div>
-    <div>
-      <h1>RoyalTea <span class="h1-acc">送货排班</span></h1>
-      <div class="sub">Delivery Scheduler · Melbourne</div>
-    </div>
-    <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
-      <button id="shareBtn" class="btn btn-orange btn-sm" style="display:none" onclick="openShareModal()">🔗 生成司机链接</button>
-      <button id="driverModeBtn" class="btn btn-grn btn-sm" style="display:none" onclick="enterDriverMode()">🚐 司机模式</button>
-    </div>
-  </header>
-
-  <div class="grid">
-    <div style="display:flex;flex-direction:column;gap:14px">
-      <div class="panel">
-        <div>
-          <div class="label"><span class="ld"></span>粘贴客户信息</div>
-          <textarea id="rawInput" placeholder="直接粘贴，格式不限，例如：
-
-YuTong Han: 52件
-地址: 84 lemont avenue mount Waverley
-👉kevin带
-
-Y-云速递: 105件
-👉送隔壁
-
-王小明，3箱，23 Box Hill Rd，0412345678，下午2-5点，现金
-
-多个客户之间空一行隔开"></textarea>
-        </div>
-        <button class="btn btn-acc" onclick="parseAndSort()">✦ 解析 &amp; 自动排线</button>
-        <div class="status" id="statusBar">等待输入客户信息...</div>
-      </div>
-      <div class="panel">
-        <div>
-          <div class="label"><span class="ld"></span>送货日期</div>
-          <input type="date" id="delivDate">
-        </div>
-
-        <div>
-          <div class="label"><span class="ld"></span>司机备注（可选）</div>
-          <textarea id="driverNote" placeholder="例如：下午1点从仓库出发，Doncaster停车困难"></textarea>
-        </div>
-      </div>
-    </div>
-
-    <div style="display:flex;flex-direction:column;gap:12px">
-      <div class="panel" id="statsPanel" style="display:none;flex-direction:row;gap:8px;flex-wrap:wrap;padding:14px 18px">
-        <span class="pill pill-dim">共 <b id="sTot">0</b> 单</span>
-        <span class="pill pill-dim"><b id="sPkg">0</b> 件货</span>
-        <span class="pill pill-grn">现金 <b id="sCash">0</b> 单</span>
-      </div>
-      <div class="tbl-wrap" id="tblWrap">
-        <div class="empty"><div class="empty-icon">📦</div>粘贴客户信息后<br>点击「解析 &amp; 自动排线」</div>
-      </div>
-      <div class="action-bar" id="actionBar" style="display:none">
-        <button class="btn btn-blu btn-sm" onclick="openMaps()">🗺 Google Maps 导航</button>
-        <button class="btn btn-grn btn-sm" onclick="copySheet()">📋 复制司机表格</button>
-        <button class="btn btn-ghost btn-sm" onclick="exportCSV()">⬇ 导出 CSV</button>
-        <button class="btn btn-ghost btn-sm" onclick="clearAll()">✕ 清空</button>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- ══ SHARE MODAL ══ -->
-<div id="shareModal">
-  <div class="share-box">
-    <div class="share-head">
-      <div>
-        <div style="font-weight:800;font-size:15px">🔗 生成司机链接</div>
-        <div style="font-size:12px;color:var(--mut);font-family:monospace;margin-top:3px">司机点开链接直接进入送货模式</div>
-      </div>
-      <button class="modal-close" onclick="closeShareModal()">×</button>
-    </div>
-    <div class="share-body">
-      <div>
-        <div class="label"><span class="ld"></span>链接（点击全选）</div>
-        <div class="url-box ready" id="shareUrlBox" onclick="selectUrl()">正在生成...</div>
-      </div>
-      <div class="share-hint">
-        📌 <b>使用方法：</b><br>
-        1. 点「复制链接」按钮<br>
-        2. 粘贴到微信 / WhatsApp 发给司机<br>
-        3. 司机手机点开链接，直接进入送货模式<br>
-        4. 无需下载任何 App，手机浏览器即可
-      </div>
-      <div class="share-btns">
-        <button class="btn btn-acc" onclick="copyShareUrl()">📋 复制链接</button>
-        <button class="btn btn-ghost" onclick="closeShareModal()" style="flex:0;padding:11px 16px">关闭</button>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- ══ DRIVER VIEW ══ -->
-<div id="driverView">
-  <div class="driver-header">
-    <button class="btn btn-ghost btn-sm" id="driverBackBtn" onclick="exitDriverMode()">← 返回</button>
-    <div style="flex:1">
-      <div style="font-weight:800;font-size:16px">司机模式</div>
-      <div style="font-size:11px;color:var(--mut);font-family:monospace" id="driverProgress">0 / 0 单完成</div>
-    </div>
-    <div style="font-size:11px;color:var(--mut);font-family:monospace;text-align:right" id="driverDateLabel"></div>
-  </div>
-  <div class="progress-bar"><div class="progress-fill" id="progressFill" style="width:0%"></div></div>
-  <div id="allDoneView" class="all-done" style="display:none">
-    <div style="font-size:56px;margin-bottom:16px">🎉</div>
-    <div style="font-size:22px;font-weight:800;margin-bottom:8px">全部送完！</div>
-    <div style="color:var(--mut);font-size:13px;margin-bottom:20px" id="allDoneSub"></div>
-    <button id="returnHomeBtn" class="btn btn-grn" style="width:100%;justify-content:center;font-size:15px;padding:14px;margin-top:8px" onclick="navToWarehouse()">🏠 导航回仓库</button>
-  </div>
-  <div id="stopList"></div>
-  <div id="currentDetail"></div>
-</div>
-
-<!-- ══ PHOTO MODAL ══ -->
-<div id="photoModal">
-  <div class="modal-box">
-    <div class="modal-head">
-      <div>
-        <div style="font-weight:800;font-size:15px">📸 送货确认拍照</div>
-        <div style="font-size:12px;color:var(--mut);font-family:monospace;margin-top:3px" id="modalSub"></div>
-      </div>
-      <button class="modal-close" onclick="closeModal()">×</button>
-    </div>
-    <div class="modal-body">
-      <div class="cam-area">
-        <video id="camVideo" autoplay playsinline muted></video>
-        <img id="photoPreview" alt="proof">
-        <div id="camPh" class="cam-ph">
-          <div style="font-size:38px;opacity:.3;margin-bottom:10px">📦</div>
-          请拍摄货物照片<br><span style="font-size:11px">拍照后才能完成此单</span>
-        </div>
-        <div id="doneBadge" class="done-badge" style="display:none">✓ 已拍摄</div>
-      </div>
-      <canvas id="snapCanvas" style="display:none"></canvas>
-      <input type="file" id="fileInput" accept="image/*" capture="environment" style="display:none" onchange="handleFile(event)">
-      <div id="camErr" style="color:var(--red);font-size:12px;margin-bottom:12px;text-align:center;display:none"></div>
-      <div class="modal-btns" id="modalBtns"></div>
-    </div>
-  </div>
-</div>
-
-<div id="toast"></div>
-
-<script>
-// ══════════════════════════════════
+// ═══════════════════════════════════════
 // STATE
-// ══════════════════════════════════
-let deliveries = [];
-let photos = {};
-let currentStop = 0;
-let camStream = null;
-let modalIdx = null;
-let dragSrc = null;
-let pendingPhoto = null;
-let isDriverOnlyMode = false; // opened via shared link
-window._warehouseAddr = '1/41-43 Lexton Road, Box Hill North VIC 3129';
+// ═══════════════════════════════════════
+let driverName = '';
+let drivers = [];          // list of driver names for multi-driver
+let deliveries = [];       // flat list (after VRP, each has .driverIdx)
+let vrpRoutes = [];        // [{driverName, stops:[], distKm, timeMin}]
+let activeRouteTab = 0;
+let imgBase64 = null, imgMime = null;
+let currentSession = null;
+let leafletMap = null;
 
-document.getElementById('delivDate').value = new Date().toISOString().split('T')[0];
+const WAREHOUSE_ADDR = 'U1/41-43 Lexton Road, Box Hill North VIC 3129 Australia';
+const WAREHOUSE_COORDS = [145.1210, -37.7533]; // [lng, lat] for ORS
+const WAREHOUSE_LL = [-37.7533, 145.1210];     // [lat, lng] for Leaflet
 
-// ══════════════════════════════════
-// BOOT — check for shared link
-// ══════════════════════════════════
-window.addEventListener('load', () => {
-  const hash = location.hash.slice(1);
-  if (hash.startsWith('d=')) {
-    try {
-      const json = decodeData(hash.slice(2));
-      const payload = JSON.parse(json);
-      deliveries = payload.deliveries || [];
-      const date = payload.date || '';
-      const note = payload.note || '';
-      const wh   = payload.wh  || '';
-      if (wh) { const el=document.getElementById('warehouseAddr'); if(el) el.value=wh; }
-      window._warehouseAddr = wh || '1/41-43 Lexton Road, Box Hill North VIC 3129';
-      if (deliveries.length) {
-        isDriverOnlyMode = true;
-        // Hide manager, show driver directly
-        document.getElementById('managerView').style.display = 'none';
-        document.getElementById('driverBackBtn').style.display = 'none'; // no back in shared mode
-        if (date) document.getElementById('driverDateLabel').textContent = '📅 ' + date;
-        if (note) {
-          document.getElementById('driverDateLabel').insertAdjacentHTML('afterend',
-            `<div style="font-size:11px;color:var(--mut);font-family:monospace;margin-top:4px;max-width:200px;text-align:right">📝 ${escHtml(note)}</div>`);
-        }
-        enterDriverMode();
-      }
-    } catch(e) { /* bad hash, just load normally */ }
+const DRIVER_COLORS = ['#4f8ef7','#38c9a0','#f7c94f','#f76b6b','#a78bfa','#fb923c'];
+
+// ═══════════════════════════════════════
+// IndexedDB
+// ═══════════════════════════════════════
+let db;
+function openDB(){
+  return new Promise((res,rej)=>{
+    const req=indexedDB.open('huanqiu_v3',1);
+    req.onupgradeneeded=e=>{
+      const d=e.target.result;
+      if(!d.objectStoreNames.contains('sessions'))
+        d.createObjectStore('sessions',{keyPath:'id',autoIncrement:true});
+    };
+    req.onsuccess=e=>{db=e.target.result;res(db);};
+    req.onerror=()=>rej(req.error);
+  });
+}
+const dbStore=(m)=>db.transaction('sessions',m).objectStore('sessions');
+const dbSave=(s)=>new Promise((res,rej)=>{const r=dbStore('readwrite').add(s);r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);});
+const dbPut=(s)=>new Promise((res,rej)=>{const r=dbStore('readwrite').put(s);r.onsuccess=()=>res();r.onerror=()=>rej(r.error);});
+const dbAll=()=>new Promise((res,rej)=>{const r=dbStore('readonly').getAll();r.onsuccess=()=>res([...r.result].reverse());r.onerror=()=>rej(r.error);});
+
+// ═══════════════════════════════════════
+// ORS KEY
+// ═══════════════════════════════════════
+function getOrsKey(){ return localStorage.getItem('orsKey')||''; }
+function saveOrsKey(){
+  const k=document.getElementById('orsKey').value.trim();
+  localStorage.setItem('orsKey',k);
+  document.getElementById('keyStatus').textContent='';
+}
+async function testOrsKey(){
+  const k=getOrsKey();
+  if(!k){showToast('请先输入 API Key','err');return;}
+  setStatus('loading','测试 API Key...');
+  try{
+    const r=await fetch('https://api.openrouteservice.org/v2/directions/driving-car',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':k},
+      body:JSON.stringify({coordinates:[WAREHOUSE_COORDS,WAREHOUSE_COORDS]})
+    });
+    if(r.ok){
+      document.getElementById('keyStatus').textContent='✓ API Key 有效';
+      setStatus('success','✓ API Key 验证成功，路线优化引擎就绪');
+      showToast('API Key 有效 ✓','ok');
+    } else {
+      const e=await r.json();
+      throw new Error(e.error?.message||`HTTP ${r.status}`);
+    }
+  }catch(e){
+    document.getElementById('keyStatus').style.color='var(--red)';
+    document.getElementById('keyStatus').textContent='✗ 无效：'+e.message;
+    setStatus('error','API Key 无效：'+e.message);
+  }
+}
+
+// ═══════════════════════════════════════
+// DRIVER GATE
+// ═══════════════════════════════════════
+function checkDriverName(){
+  document.getElementById('driverConfirmBtn').disabled=
+    document.getElementById('driverNameInput').value.trim().length<2;
+}
+function confirmDriver(){
+  const v=document.getElementById('driverNameInput').value.trim();
+  if(v.length<2)return;
+  driverName=v;
+  localStorage.setItem('driverName',v);
+  document.getElementById('driverGate').classList.add('hidden');
+  document.getElementById('driverChip').style.display='flex';
+  document.getElementById('driverChipName').textContent=v;
+  document.getElementById('dateDriverRow').style.display='flex';
+  document.getElementById('driversCard').style.display='block';
+  // Seed drivers list with this driver
+  if(!drivers.includes(v)){drivers=[v];renderDriverTags();}
+  setStatus('idle','请录入客户信息，然后点击解析...');
+  showToast(`欢迎，${v}！`,'ok');
+}
+function changeDriver(){
+  if(!confirm('切换司机？'))return;
+  driverName='';localStorage.removeItem('driverName');
+  document.getElementById('driverGate').classList.remove('hidden');
+  document.getElementById('driverNameInput').value='';checkDriverName();
+  document.getElementById('driverChip').style.display='none';
+  document.getElementById('dateDriverRow').style.display='none';
+}
+
+// ═══════════════════════════════════════
+// MULTI-DRIVER MANAGEMENT
+// ═══════════════════════════════════════
+function addDriver(){
+  const v=document.getElementById('newDriverInput').value.trim();
+  if(!v||drivers.includes(v)){showToast('请输入不重复的司机名','err');return;}
+  drivers.push(v);
+  document.getElementById('newDriverInput').value='';
+  renderDriverTags();
+}
+function removeDriver(name){
+  if(drivers.length<=1){showToast('至少保留一名司机','err');return;}
+  drivers=drivers.filter(d=>d!==name);
+  renderDriverTags();
+}
+function renderDriverTags(){
+  const row=document.getElementById('driverTagsRow');
+  row.innerHTML=drivers.map((d,i)=>`
+    <div class="driver-tag" style="background:${DRIVER_COLORS[i%DRIVER_COLORS.length]}22;border-color:${DRIVER_COLORS[i%DRIVER_COLORS.length]}55;color:${DRIVER_COLORS[i%DRIVER_COLORS.length]}">
+      🚚 ${esc(d)}
+      <span class="rm" onclick="removeDriver('${esc(d)}')">×</span>
+    </div>`).join('');
+}
+
+// ═══════════════════════════════════════
+// PAGE & TAB NAV
+// ═══════════════════════════════════════
+function switchPage(name){
+  ['plan','driver','history'].forEach(p=>{
+    document.getElementById('page-'+p).classList.toggle('active',p===name);
+    document.getElementById('nav-'+p).classList.toggle('active',p===name);
+  });
+  if(name==='driver')renderDriverStops();
+  if(name==='history')loadHistory();
+  if(name==='plan'&&leafletMap){setTimeout(()=>leafletMap.invalidateSize(),100);}
+}
+function switchTab(name){
+  ['text','image'].forEach(t=>{
+    document.getElementById('tab-'+t).classList.toggle('active',t===name);
+    document.getElementById('pane-'+t).classList.toggle('active',t===name);
+  });
+}
+
+// ═══════════════════════════════════════
+// IMAGE INPUT
+// ═══════════════════════════════════════
+function handleImgSelect(input){
+  const file=input.files[0];if(!file)return;
+  const reader=new FileReader();
+  reader.onload=e=>{
+    imgBase64=e.target.result.split(',')[1];imgMime=file.type||'image/jpeg';
+    const prev=document.getElementById('imgPreview');
+    prev.src=e.target.result;prev.style.display='block';
+    document.getElementById('imgParseBtn').disabled=false;
+    setStatus('idle',`已选择：${file.name}`);
+  };
+  reader.readAsDataURL(file);
+}
+const dz=document.getElementById('dropZone');
+dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('drag-over');});
+dz.addEventListener('dragleave',()=>dz.classList.remove('drag-over'));
+dz.addEventListener('drop',e=>{
+  e.preventDefault();dz.classList.remove('drag-over');
+  const f=e.dataTransfer.files[0];
+  if(f&&f.type.startsWith('image/')){
+    const dt=new DataTransfer();dt.items.add(f);
+    document.getElementById('imgFile').files=dt.files;
+    handleImgSelect(document.getElementById('imgFile'));
   }
 });
 
-// ══════════════════════════════════
-// ENCODE / DECODE  (base64 via UTF-8)
-// ══════════════════════════════════
-// Simple UTF-8 → base64url (reliable, handles Chinese)
-function encodeData(str) {
-  const bytes = new TextEncoder().encode(str);
-  let bin = '';
-  bytes.forEach(b => bin += String.fromCharCode(b));
-  return btoa(bin).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
-}
-function decodeData(b64url) {
-  const b64 = b64url.replace(/-/g,'+').replace(/_/g,'/');
-  const bin = atob(b64);
-  const bytes = Uint8Array.from(bin, ch => ch.charCodeAt(0));
-  return new TextDecoder().decode(bytes);
-}
+// ═══════════════════════════════════════
+// CLAUDE API — extract delivery info
+// ═══════════════════════════════════════
+const SYSTEM=`你是澳洲墨尔本送货信息提取助手。只返回JSON数组，无其他文字：
+[{"name":"姓名","packages":件数,"address":"完整地址含suburb如25 Smith Rd Box Hill VIC","phone":"电话","timeSlot":"时间","cash":true或false,"note":"备注或空字符串"}]
+cash=true=需收现金。地址必须含suburb和VIC。`;
 
-// ══════════════════════════════════
-// SHARE MODAL
-// ══════════════════════════════════
-function openShareModal() {
-  if (!deliveries.length) { toast('请先解析排班数据','err'); return; }
-  const date = document.getElementById('delivDate').value;
-  const note = document.getElementById('driverNote').value;
-  const wh   = '1/41-43 Lexton Road, Box Hill North VIC 3129';
-  const payload = JSON.stringify({ deliveries, date, note, wh });
-  const encoded = encodeData(payload);
-  const base = location.href.split('#')[0];
-  const url  = base + '#d=' + encoded;
-  document.getElementById('shareUrlBox').textContent = url;
-  document.getElementById('shareUrlBox').dataset.url = url;
-  document.getElementById('shareModal').classList.add('open');
+async function callClaude(messages){
+  const r=await fetch('https://api.anthropic.com/v1/messages',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:3000,system:SYSTEM,messages})
+  });
+  if(!r.ok)throw new Error('Claude API '+r.status);
+  const d=await r.json();
+  return d.content.map(b=>b.text||'').join('');
 }
-function closeShareModal() {
-  document.getElementById('shareModal').classList.remove('open');
-}
-function selectUrl() {
-  const el = document.getElementById('shareUrlBox');
-  const range = document.createRange();
-  range.selectNodeContents(el);
-  const sel = window.getSelection();
-  sel.removeAllRanges(); sel.addRange(range);
-}
-function copyShareUrl() {
-  const url = document.getElementById('shareUrlBox').dataset.url;
-  navigator.clipboard.writeText(url)
-    .then(() => { toast('链接已复制，粘贴到微信发给司机','ok'); })
-    .catch(() => {
-      selectUrl();
-      document.execCommand('copy');
-      toast('链接已复制','ok');
-    });
+function parseJSON(raw){
+  return JSON.parse(raw.trim().replace(/^```json\s*/,'').replace(/\s*```$/,'').trim());
 }
 
-
-// ══════════════════════════════════════════════════════════
-
-
-
-
-
-
-// ══════════════════════════════════
-// PARSER
-// ══════════════════════════════════
-
-// ══════════════════════════════════════════════════════
-// GEOCODE + NEAREST-NEIGHBOR ROUTING
-// Uses OpenStreetMap Nominatim (free, no API key)
-// ══════════════════════════════════════════════════════
-const WH = { lat: -37.8136, lng: 145.1185, address: '1/41-43 Lexton Road, Box Hill North VIC 3129' };
-
-// Haversine distance in km
-function haversine(lat1, lng1, lat2, lng2) {
-  const R = 6371;
-  const dLat = (lat2-lat1)*Math.PI/180;
-  const dLng = (lng2-lng1)*Math.PI/180;
-  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+async function doParseText(){
+  if(!driverName){showToast('请先完成司机登录','err');return;}
+  const raw=document.getElementById('rawInput').value.trim();
+  if(!raw){showToast('请先粘贴信息','err');return;}
+  const btn=document.getElementById('parseTextBtn');
+  btn.disabled=true;setStatus('loading','AI 解析中...');
+  try{await runVRP(parseJSON(await callClaude([{role:'user',content:'提取送货信息：\n\n'+raw}])));}
+  catch(e){setStatus('error','解析失败：'+e.message);}
+  finally{btn.disabled=false;}
+}
+async function doParseImage(){
+  if(!driverName){showToast('请先完成司机登录','err');return;}
+  if(!imgBase64){showToast('请先选择图片','err');return;}
+  const btn=document.getElementById('imgParseBtn');
+  btn.disabled=true;setStatus('loading','AI 识别图片中...');
+  try{
+    const txt=await callClaude([{role:'user',content:[
+      {type:'image',source:{type:'base64',media_type:imgMime,data:imgBase64}},
+      {type:'text',text:'识别图片中所有送货客户信息并提取。'}
+    ]}]);
+    await runVRP(parseJSON(txt));
+  }catch(e){setStatus('error','识别失败：'+e.message);}
+  finally{btn.disabled=false;}
 }
 
-// Geocode one address via Nominatim
-async function geocodeOne(address) {
-  try {
-    const q = encodeURIComponent(address + ', Melbourne VIC, Australia');
-    const url = 'https://nominatim.openstreetmap.org/search?q=' + q + '&format=json&limit=1&countrycodes=au';
-    const res = await fetch(url, { headers: { 'Accept-Language': 'en', 'User-Agent': 'RoyalTea-Delivery/1.0' } });
-    const data = await res.json();
-    if (data.length > 0) return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
-  } catch(e) {}
+// ═══════════════════════════════════════
+// GEOCODING (ORS)
+// ═══════════════════════════════════════
+async function geocodeAddr(addr){
+  const key=getOrsKey();
+  if(!key) return null;
+  const q=encodeURIComponent(addr+', Melbourne, VIC, Australia');
+  try{
+    const r=await fetch(
+      `https://api.openrouteservice.org/geocode/search?api_key=${key}&text=${q}&boundary.country=AU&layers=address&size=1`
+    );
+    const d=await r.json();
+    if(d.features&&d.features[0]){
+      const [lng,lat]=d.features[0].geometry.coordinates;
+      return {lng,lat};
+    }
+  }catch(e){}
+  // fallback: Nominatim (no key needed)
+  try{
+    const r2=await fetch(
+      `https://nominatim.openstreetmap.org/search?q=${q}&format=json&limit=1&countrycodes=au`,
+      {headers:{'Accept-Language':'en'}}
+    );
+    const d2=await r2.json();
+    if(d2&&d2[0])return{lng:parseFloat(d2[0].lon),lat:parseFloat(d2[0].lat)};
+  }catch(e){}
   return null;
 }
 
-async function geocodeAndRoute(stops) {
-  // Geocode all stops (with small delay to respect Nominatim rate limit: 1 req/sec)
-  let geocoded = 0;
-  for (let i = 0; i < stops.length; i++) {
-    setStatus('busy', `正在定位地址 ${i+1}/${stops.length}...`);
-    const addr = cleanAddr(stops[i].address);
-    if (!addr || addr === 'Melbourne') {
-      stops[i]._lat = WH.lat + (Math.random()-0.5)*0.1; // random near warehouse if no address
-      stops[i]._lng = WH.lng + (Math.random()-0.5)*0.1;
-    } else {
-      const geo = await geocodeOne(addr);
-      if (geo) {
-        stops[i]._lat = geo.lat;
-        stops[i]._lng = geo.lng;
-        geocoded++;
-      } else {
-        stops[i]._lat = WH.lat + (Math.random()-0.5)*0.15;
-        stops[i]._lng = WH.lng + (Math.random()-0.5)*0.15;
+// ═══════════════════════════════════════
+// VRP OPTIMIZATION ENGINE
+// Uses ORS /optimization endpoint (Vroom — industrial-grade TSP/VRP solver)
+// Falls back to 2-opt on straight-line distances if no API key
+// ═══════════════════════════════════════
+async function runVRP(arr){
+  const n=arr.length;
+  const key=getOrsKey();
+
+  // ── Step 1: Geocode all addresses ──
+  const coords=[]; // [{lng,lat,ok}]
+  for(let i=0;i<n;i++){
+    setStatus('loading',`地理编码 ${i+1}/${n}：${arr[i].name}...`);
+    const c=await geocodeAddr(arr[i].address);
+    coords.push(c?{lng:c.lng,lat:c.lat,ok:true}:{
+      lng:WAREHOUSE_COORDS[0]+(Math.random()-.5)*.02,
+      lat:WAREHOUSE_COORDS[1]+(Math.random()-.5)*.02,
+      ok:false
+    });
+    // Nominatim rate limit: 1 req/s when no ORS key
+    if(!key&&i<n-1)await new Promise(r=>setTimeout(r,1100));
+  }
+
+  const failed=coords.filter(c=>!c.ok).length;
+  setStatus('loading',`路线优化中（${drivers.length}辆车 · VRP求解器）...`);
+
+  if(key){
+    // ── ORS Vroom VRP ──
+    await runOrsVRP(arr,coords,key);
+  } else {
+    // ── Fallback: 2-opt on haversine distances ──
+    showToast('未配置 API Key，使用本地2-opt优化','err');
+    runLocal2opt(arr,coords);
+  }
+
+  if(failed>0)showToast(`⚠️ ${failed}个地址未精确定位`,'err');
+}
+
+// ── ORS Vroom VRP ──
+async function runOrsVRP(arr,coords,key){
+  const nDrivers=drivers.length;
+
+  // Build Vroom job list (one per delivery stop)
+  const jobs=arr.map((d,i)=>({
+    id:i+1,
+    location:[coords[i].lng,coords[i].lat],
+    service:300 // 5 min service time per stop (seconds)
+  }));
+
+  // Build vehicle list (one per driver)
+  const vehicles=drivers.map((name,i)=>({
+    id:i,
+    profile:'driving-car',
+    start:WAREHOUSE_COORDS,
+    end:WAREHOUSE_COORDS,
+    capacity:[999] // effectively unlimited
+  }));
+
+  const body={jobs,vehicles,options:{g:true}};
+
+  let result;
+  try{
+    const r=await fetch('https://api.openrouteservice.org/optimization',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':key},
+      body:JSON.stringify(body)
+    });
+    if(!r.ok){
+      const e=await r.json();
+      throw new Error(e.error?.message||`ORS HTTP ${r.status}`);
+    }
+    result=await r.json();
+  }catch(e){
+    setStatus('error','ORS 优化失败：'+e.message+'  — 使用本地2-opt备用');
+    showToast('ORS 失败，切换本地优化','err');
+    runLocal2opt(arr,coords);
+    return;
+  }
+
+  // Parse Vroom result
+  vrpRoutes=[];
+  deliveries=[];
+
+  result.routes.forEach(route=>{
+    const driverIdx=route.vehicle;
+    const driverN=drivers[driverIdx]||('司机'+(driverIdx+1));
+    const stops=[];
+    let totalDist=0,totalTime=0;
+
+    route.steps.forEach(step=>{
+      if(step.type==='job'){
+        const jobId=step.job-1; // our 0-based index
+        stops.push({
+          ...arr[jobId],
+          _lat:coords[jobId].lat,
+          _lng:coords[jobId].lng,
+          _ok:coords[jobId].ok,
+          driverIdx,
+          driverName:driverN,
+          photos:[],done:false,cashCollected:null
+        });
+      }
+      if(step.type==='end'&&step.distance)totalDist=step.distance;
+      if(step.type==='end'&&step.arrival)totalTime=step.arrival;
+    });
+
+    // summary: dist in km, time in minutes (Vroom gives seconds/meters)
+    const distKm=((route.distance||0)/1000).toFixed(1);
+    const timeMin=Math.round((route.duration||0)/60);
+
+    vrpRoutes.push({driverName:driverN,driverIdx,stops,distKm,timeMin});
+    stops.forEach(s=>deliveries.push(s));
+  });
+
+  renderRouteResult(arr.length);
+}
+
+// ── Local 2-opt fallback ──
+function haversine(a,b){
+  const R=6371,dLat=(b.lat-a.lat)*Math.PI/180,dLng=(b.lng-a.lng)*Math.PI/180;
+  const x=Math.sin(dLat/2)**2+Math.cos(a.lat*Math.PI/180)*Math.cos(b.lat*Math.PI/180)*Math.sin(dLng/2)**2;
+  return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));
+}
+function routeDist(route,wh){
+  const toLL=n=>({lat:n.lat,lng:n.lng});
+  const whLL={lat:wh[1],lng:wh[0]};
+  if(!route.length)return 0;
+  let d=haversine(whLL,toLL(route[0]));
+  for(let i=0;i<route.length-1;i++)d+=haversine(toLL(route[i]),toLL(route[i+1]));
+  d+=haversine(toLL(route[route.length-1]),whLL);
+  return d;
+}
+function nn(nodes,wh){
+  const whLL={lat:wh[1],lng:wh[0]};
+  const unvisited=[...nodes],route=[];let cur=whLL;
+  while(unvisited.length){
+    let best=0,bestD=Infinity;
+    unvisited.forEach((n,i)=>{const d=haversine(cur,{lat:n.lat,lng:n.lng});if(d<bestD){bestD=d;best=i;}});
+    route.push(unvisited[best]);cur={lat:unvisited[best].lat,lng:unvisited[best].lng};unvisited.splice(best,1);
+  }
+  return route;
+}
+function twoOpt(route,wh){
+  let best=[...route];let improved=true;let passes=0;
+  while(improved&&passes<200){
+    improved=false;passes++;
+    for(let i=0;i<best.length-1;i++){
+      for(let k=i+1;k<best.length;k++){
+        const c=[...best.slice(0,i),...best.slice(i,k+1).reverse(),...best.slice(k+1)];
+        if(routeDist(c,wh)<routeDist(best,wh)-0.001){best=c;improved=true;}
       }
     }
-    // Nominatim rate limit: 1 request per second
-    if (i < stops.length - 1) await new Promise(r => setTimeout(r, 1100));
   }
-
-  // Nearest-neighbor from warehouse
-  setStatus('busy', `定位完成 ${geocoded}/${stops.length}，正在规划路线...`);
-  const unvisited = [...stops];
-  const route = [];
-  let curLat = WH.lat, curLng = WH.lng;
-
-  while (unvisited.length > 0) {
-    let bestIdx = 0, bestDist = Infinity;
-    for (let i = 0; i < unvisited.length; i++) {
-      const d = haversine(curLat, curLng, unvisited[i]._lat, unvisited[i]._lng);
-      if (d < bestDist) { bestDist = d; bestIdx = i; }
-    }
-    const next = unvisited.splice(bestIdx, 1)[0];
-    route.push(next);
-    curLat = next._lat;
-    curLng = next._lng;
-  }
-
-  deliveries = route;
-  renderTable();
-  setStatus('ok', `✓ 路线规划完成，共 ${deliveries.length} 个客户（已按最短路线排序）`);
-  toast(`路线规划完成！${deliveries.length} 单`, 'ok');
-  document.getElementById('driverModeBtn').style.display = '';
-  document.getElementById('shareBtn').style.display = '';
+  return best;
 }
 
-async function parseAndSort() {
-  const raw = document.getElementById('rawInput').value.trim();
-  if (!raw) { toast('请先粘贴客户信息','err'); return; }
-  setStatus('busy','正在解析...');
+function runLocal2opt(arr,coords){
+  // Split stops evenly among drivers
+  const nodes=coords.map((c,i)=>({...c,idx:i}));
+  const chunkSize=Math.ceil(nodes.length/drivers.length);
+  vrpRoutes=[];deliveries=[];
 
-  const blocks = splitBlocks(raw);
-  const results = blocks.map(parseBlock).filter(Boolean);
-
-  if (!results.length) { setStatus('err','未能识别任何客户信息，请检查格式'); return; }
-
-  // Geocode addresses then run nearest-neighbor from warehouse
-  setStatus('busy','正在计算最短路线...');
-  await geocodeAndRoute(results);
-
-  // rendering and status handled by geocodeAndRoute
+  drivers.forEach((driverN,di)=>{
+    const chunk=nodes.slice(di*chunkSize,(di+1)*chunkSize);
+    if(!chunk.length)return;
+    let route=nn(chunk,WAREHOUSE_COORDS);
+    route=twoOpt(route,WAREHOUSE_COORDS);
+    const distKm=routeDist(route,WAREHOUSE_COORDS).toFixed(1);
+    const stops=route.map(node=>({
+      ...arr[node.idx],_lat:node.lat,_lng:node.lng,_ok:node.ok,
+      driverIdx:di,driverName:driverN,photos:[],done:false,cashCollected:null
+    }));
+    vrpRoutes.push({driverName:driverN,driverIdx:di,stops,distKm,timeMin:Math.round(parseFloat(distKm)*2)});
+    stops.forEach(s=>deliveries.push(s));
+  });
+  renderRouteResult(arr.length);
 }
 
-function splitBlocks(raw) {
-  let blocks = raw.split(/\n{2,}/).map(b=>b.trim()).filter(Boolean);
-  if (blocks.length === 1) blocks = raw.split('\n').map(b=>b.trim()).filter(Boolean);
-  return blocks;
+// ═══════════════════════════════════════
+// RENDER RESULTS
+// ═══════════════════════════════════════
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+function renderRouteResult(total){
+  // Stats
+  const pkgs=deliveries.reduce((s,d)=>s+d.packages,0);
+  const cash=deliveries.filter(d=>d.cash).length;
+  const totalKm=vrpRoutes.reduce((s,r)=>s+parseFloat(r.distKm),0).toFixed(1);
+  const totalMin=vrpRoutes.reduce((s,r)=>s+r.timeMin,0);
+  document.getElementById('statTotal').textContent=total;
+  document.getElementById('statPkgs').textContent=pkgs;
+  document.getElementById('statCash').textContent=cash;
+  document.getElementById('statKm').textContent=totalKm;
+  document.getElementById('statMin').textContent=totalMin;
+
+  // Driver tabs
+  const tabs=document.getElementById('driverRouteTabs');
+  tabs.innerHTML=vrpRoutes.map((r,i)=>`
+    <button class="drt${i===activeRouteTab?' active':''}" onclick="switchRouteTab(${i})"
+      style="${i===activeRouteTab?'border-bottom-color:'+DRIVER_COLORS[i%DRIVER_COLORS.length]+';color:'+DRIVER_COLORS[i%DRIVER_COLORS.length]:''}">
+      🚚 ${esc(r.driverName)} (${r.stops.length}单 · ${r.distKm}km)
+    </button>`).join('');
+
+  renderRouteTable(activeRouteTab);
+  renderMap();
+  document.getElementById('routeCard').style.display='block';
+
+  const method=getOrsKey()?'ORS VRP (Vroom)':'本地2-opt';
+  setStatus('success',`✓ ${method} 优化完成 · 总${total}单 · ~${totalKm}km · ~${totalMin}分钟`);
+  showToast(`✓ VRP 优化完成！${total}单 ~${totalKm}km`,'ok');
 }
 
-function parseBlock(block) {
-  const lines = block.split('\n').map(l=>l.trim()).filter(Boolean);
-  if (!lines.length) return null;
-
-  let name = lines[0]
-    .replace(/^(客户|姓名|name)[：:：\s]*/i,'')
-    .replace(/[：:]\s*\d+.*$/,'')
-    .replace(/,\s*\d+.*/,'')
-    .replace(/\s+\d+\s*[件箱包个].*/,'')
-    .replace(/^[👉📍📞⏰📦]\s*/,'')
-    .trim();
-  if (!name) name = '未知客户';
-
-  const pkgMatch = block.match(/(\d+)\s*[件箱包个pcs]/i);
-  const packages = pkgMatch ? parseInt(pkgMatch[1]) : 1;
-
-  let address = '';
-  const addrLine = lines.find(l=>/^(地址|address)[：:：]/i.test(l));
-  if (addrLine) {
-    address = addrLine.replace(/^(地址|address)[：:：\s]*/i,'').trim();
-  } else {
-    const streetLine = lines.find(l=>/\d+\s+[a-z]/i.test(l)&&!/^\d+\s*[件箱包个]/.test(l)&&!/^[👉📝]/.test(l));
-    if (streetLine) address = streetLine.replace(/^(地址|address)[：:：\s]*/i,'').trim();
-  }
-  // Strip leading emoji/labels
-  address = address.replace(/^[👉📍]\s*/,'').trim();
-  // Strip trailing phone numbers (04xxxxxxxx, +61xxxxxxxxx, etc.)
-  address = address.replace(/[\s,，]+(\+?61\s*[24-9]\d{8}|0[24-9]\d{8}).*$/,'').trim();
-  // Strip trailing time expressions (下午3点, 3pm, 10am, 上午10, etc.)
-  address = address.replace(/[\s,，]+(上午|下午|早上|晚上)\s*\d.*$/,'').trim();
-  address = address.replace(/[\s,，]+\d{1,2}\s*(am|pm|点|时).*$/i,'').trim();
-  // Strip trailing 现金/cash/已付 keywords
-  address = address.replace(/[\s,，]+(现金|cash|已付|转账|eft).*$/i,'').trim();
-  // Strip trailing Chinese characters that leaked in (备注 / notes fragment)
-  address = address.replace(/[\s,，]+[\u4e00-\u9fff].{0,10}$/, '').trim();
-
-  const phoneMatch = block.match(/(\+?61\s*[24-9]\d{8}|0[24-9]\d{8}|\d{4}\s*\d{3}\s*\d{3})/);
-  const phone = phoneMatch ? phoneMatch[1].replace(/\s/g,'') : '';
-
-  let timeSlot='时间待定', timeOrder=50;
-  const tts = [
-    [/上午\s*(\d+)\s*[点时]/,  m=>[`上午${m[1]}点`,  parseInt(m[1])]],
-    [/早上\s*(\d+)\s*[点时]/,  m=>[`早上${m[1]}点`,  parseInt(m[1])]],
-    [/(\d{1,2})\s*am/i,        m=>[`${m[1]}AM`,       parseInt(m[1])]],
-    [/(\d{1,2}):(\d{2})\s*am/i,m=>[`${m[1]}:${m[2]}AM`,parseInt(m[1])]],
-    [/下午\s*(\d+)\s*[点时]/,  m=>[`下午${m[1]}点`,  parseInt(m[1])+12]],
-    [/晚上\s*(\d+)\s*[点时]/,  m=>[`晚上${m[1]}点`,  parseInt(m[1])+18]],
-    [/(\d{1,2})\s*pm/i,        m=>[`${m[1]}PM`,       parseInt(m[1])+12]],
-    [/(\d{1,2}):(\d{2})\s*pm/i,m=>[`${m[1]}:${m[2]}PM`,parseInt(m[1])+12]],
-    [/(\d{1,2})\s*[-—~]\s*(\d{1,2})\s*[点时]/,m=>[`${m[1]}-${m[2]}点`,parseInt(m[1])]],
-  ];
-  for (const [re,fn] of tts) {
-    const m=block.match(re);
-    if(m){[timeSlot,timeOrder]=fn(m);break;}
-  }
-
-  const cash=/现金|cash/i.test(block);
-  const noteLine=lines.find(l=>/^[👉📝]/.test(l)||/^(备注|note)[：:：]/i.test(l));
-  const note=noteLine?noteLine.replace(/^[👉📝]\s*/,'').replace(/^(备注|note)[：:：\s]*/i,'').trim():'';
-
-  return {name,packages,address,phone,timeSlot,timeOrder,cash,note};
+function switchRouteTab(i){
+  activeRouteTab=i;
+  document.querySelectorAll('.drt').forEach((el,idx)=>{
+    el.classList.toggle('active',idx===i);
+    el.style.borderBottomColor=idx===i?DRIVER_COLORS[idx%DRIVER_COLORS.length]:'transparent';
+    el.style.color=idx===i?DRIVER_COLORS[idx%DRIVER_COLORS.length]:'';
+  });
+  renderRouteTable(i);
 }
 
-// ══════════════════════════════════
-// TABLE
-// ══════════════════════════════════
-function renderTable() {
-  const tot=deliveries.reduce((s,d)=>s+d.packages,0);
-  const cc=deliveries.filter(d=>d.cash).length;
-  document.getElementById('statsPanel').style.display='';
-  document.getElementById('sTot').textContent=deliveries.length;
-  document.getElementById('sPkg').textContent=tot;
-  document.getElementById('sCash').textContent=cc;
-  document.getElementById('actionBar').style.display='';
-
-  let html=`<table><thead><tr>
-    <th></th><th>#</th><th>客户</th><th>件数</th><th>地址</th>
-    <th>电话</th><th>时间</th><th>付款</th><th>备注</th>
-  </tr></thead><tbody>`;
-
-  deliveries.forEach((d,i)=>{
-    const cash=d.cash?`<span class="pill pill-grn">💰 现金</span>`:`<span class="pill pill-mut">✓ 已付</span>`;
-    const tel=d.phone?`<a class="tel-link" href="tel:${d.phone}">📞 ${d.phone}</a>`:`<span style="color:var(--mut)">—</span>`;
-    html+=`<tr draggable="true" ondragstart="dragSrc=${i}" ondragover="event.preventDefault()" ondrop="doDrop(${i})"
-      onmouseenter="this.style.background='#f5c51806'" onmouseleave="this.style.background=''">
-      <td><span class="drag-handle">⠿</span></td>
-      <td><div class="num-circle">${i+1}</div></td>
-      <td style="font-weight:700;white-space:nowrap">${escHtml(d.name)}</td>
-      <td><span class="pill pill-dim">📦 ${d.packages}</span></td>
-      <td style="max-width:155px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:monospace;color:var(--mut)" title="${escHtml(d.address)}">${escHtml(d.address)||'—'}</td>
-      <td style="white-space:nowrap">${tel}</td>
-      <td><span class="pill pill-acc">${escHtml(d.timeSlot)}</span></td>
-      <td>${cash}</td>
-      <td><input class="note-in" value="${escAttr(d.note||'')}" placeholder="备注..." oninput="deliveries[${i}].note=this.value"></td>
+function renderRouteTable(dIdx){
+  const route=vrpRoutes[dIdx];
+  if(!route){document.getElementById('tableWrap').innerHTML='';return;}
+  const color=DRIVER_COLORS[dIdx%DRIVER_COLORS.length];
+  let html=`<table><thead><tr><th>#</th><th>客户</th><th>件</th><th>地址</th><th>时间</th><th>现金</th><th>导航</th></tr></thead><tbody>`;
+  route.stops.forEach((d,i)=>{
+    const addr=esc((d.address||'')+', Melbourne VIC, Australia');
+    html+=`<tr>
+      <td><span class="seq-num" style="background:${color};color:${dIdx<2?'#fff':'#0f1117'}">${i+1}</span></td>
+      <td><b>${esc(d.name)}</b>${d.note?`<br><span style="font-size:11px;color:var(--mut)">${esc(d.note)}</span>`:''}</td>
+      <td style="text-align:center">${d.packages}</td>
+      <td style="font-size:12px;max-width:150px">${esc(d.address)}</td>
+      <td style="font-size:11px;white-space:nowrap">${esc(d.timeSlot||'-')}</td>
+      <td>${d.cash?'<span class="cash-badge">💰现金</span>':'<span style="color:var(--mut);font-size:12px">无</span>'}</td>
+      <td><button class="nav-btn" onclick="navSingle('${addr}')">导航</button></td>
     </tr>`;
   });
-
-  html+=`</tbody><tfoot><tr>
-    <td colspan="3" style="padding:10px">合计</td>
-    <td style="padding:10px;font-family:monospace">${tot} 件</td>
-    <td colspan="3"></td>
-    <td style="padding:10px;color:var(--grn)">现金 ${cc} 单</td>
-    <td></td>
-  </tr></tfoot></table>`;
-
-  document.getElementById('tblWrap').innerHTML=html;
+  html+='</tbody></table>';
+  document.getElementById('tableWrap').innerHTML=html;
 }
 
-function doDrop(i){
-  if(dragSrc===null||dragSrc===i)return;
-  const arr=[...deliveries];const[m]=arr.splice(dragSrc,1);arr.splice(i,0,m);
-  deliveries=arr;dragSrc=null;renderTable();
-}
+// ═══════════════════════════════════════
+// LEAFLET MAP
+// ═══════════════════════════════════════
+function renderMap(){
+  if(leafletMap){leafletMap.remove();leafletMap=null;}
+  leafletMap=L.map('routeMap',{zoomControl:true});
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{
+    attribution:'© OpenStreetMap © CARTO',maxZoom:19
+  }).addTo(leafletMap);
 
-// ══════════════════════════════════
-// ACTIONS
-// ══════════════════════════════════
+  // Warehouse marker
+  const whIcon=L.divIcon({html:'<div style="background:#fff;color:#0f1117;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;border:2px solid #4f8ef7">🏠</div>',iconSize:[28,28],className:''});
+  L.marker(WAREHOUSE_LL,{icon:whIcon}).bindPopup('公司 · 出发/返回点').addTo(leafletMap);
 
-// Strip everything except the actual street/suburb for Maps
-function cleanAddr(raw){
-  let a=(raw||'').trim();
-  a=a.replace(/[\s,，]+(\+?61\s*[24-9]\d{8}|0[24-9]\d{8}).*$/,'');
-  a=a.replace(/[\s,，]+(上午|下午|早上|晚上)\s*\d.*$/,'');
-  a=a.replace(/[\s,，]+\d{1,2}\s*(am|pm|点|时).*$/i,'');
-  a=a.replace(/[\s,，]+(现金|cash|已付|转账|eft).*$/i,'');
-  a=a.replace(/[\s,，]+[\u4e00-\u9fff].{0,15}$/,'');
-  a=a.replace(/^[👉📍]\s*/,'');
-  return a.trim()||'Melbourne';
-}
+  const allLL=[WAREHOUSE_LL];
 
-// Navigation — works on all devices
-function mapsUrlSingle(addr){
-  const dest = cleanAddr(addr) + ', Melbourne VIC, Australia';
-  return 'https://maps.google.com/maps?daddr=' + encodeURIComponent(dest);
-}
+  vrpRoutes.forEach((route,di)=>{
+    const color=DRIVER_COLORS[di%DRIVER_COLORS.length];
+    const pathLL=[WAREHOUSE_LL];
 
-function openMapsUrl(url){
-  window.location.href = url;
-}
+    route.stops.forEach((stop,si)=>{
+      const ll=[stop._lat,stop._lng];
+      allLL.push(ll);pathLL.push(ll);
+      const icon=L.divIcon({
+        html:`<div style="background:${color};color:${di<2?'#fff':'#0f1117'};width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;border:2px solid #fff">${si+1}</div>`,
+        iconSize:[24,24],className:''
+      });
+      L.marker(ll,{icon}).bindPopup(`<b>${stop.name}</b><br>${stop.address}<br>司机：${route.driverName}`).addTo(leafletMap);
+    });
 
-function openMaps(){
-  if(!deliveries.length)return;
-  // Use /maps/dir/A/B/C/ format — works on all devices, respects explicit start address
-  const stops = deliveries.map(d=>encodeURIComponent(cleanAddr(d.address)+', Melbourne VIC, Australia'));
-  const wh = encodeURIComponent('1/41-43 Lexton Road, Box Hill North VIC 3129');
-  // Build: warehouse / stop1 / stop2 / ... / warehouse
-  const url = 'https://www.google.com/maps/dir/' + wh + '/' + stops.join('/') + '/' + wh;
-  window.open(url, '_blank');
-  toast('已打开 Google Maps 全程路线','ok');
-}
-
-function copySheet(){
-  const date=document.getElementById('delivDate').value;
-  const note=document.getElementById('driverNote').value;
-  let t=`📦 ROYALTEA 送货单\n📅 日期：${date}\n`;
-  if(note)t+=`📝 备注：${note}\n`;
-  t+='─'.repeat(36)+'\n\n';
-  deliveries.forEach((d,i)=>{
-    t+=`【${i+1}】${d.name}\n  📍 ${d.address||'地址未填'}\n  📞 ${d.phone||'电话未填'}\n  ⏰ ${d.timeSlot}\n  📦 ${d.packages}件`;
-    if(d.cash)t+='  💰 收现金';
-    if(d.note)t+=`  📝 ${d.note}`;
-    t+='\n\n';
+    pathLL.push(WAREHOUSE_LL); // return to depot
+    L.polyline(pathLL,{color,weight:3,opacity:.8,dashArray:route.stops.length?null:'6,6'}).addTo(leafletMap);
   });
-  const tot=deliveries.reduce((s,d)=>s+d.packages,0);
-  t+='─'.repeat(36)+`\n合计：${deliveries.length}单 / ${tot}件 / 现金${deliveries.filter(d=>d.cash).length}单`;
-  navigator.clipboard.writeText(t).then(()=>toast('司机表格已复制','ok')).catch(()=>{
-    const ta=document.createElement('textarea');ta.value=t;document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);toast('已复制','ok');
-  });
+
+  leafletMap.fitBounds(L.latLngBounds(allLL),{padding:[20,20]});
 }
 
-function exportCSV(){
-  const date=document.getElementById('delivDate').value;
-  let csv='\uFEFF顺序,客户,件数,地址,电话,时间,付款,备注\n';
-  deliveries.forEach((d,i)=>{csv+=`${i+1},"${d.name}",${d.packages},"${d.address}","${d.phone}","${d.timeSlot}","${d.cash?'现金':'已付款'}","${d.note||''}"\n`;});
-  const a=document.createElement('a');
-  a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
-  a.download=`送货单_${document.getElementById('delivDate').value}.csv`;a.click();
-  toast('CSV 已下载','ok');
+// ═══════════════════════════════════════
+// NAVIGATION
+// ═══════════════════════════════════════
+function navSingle(addr){
+  window.open('https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(addr),'_blank');
+}
+function openAllMaps(){
+  // Open Maps for the active driver's route
+  const route=vrpRoutes[activeRouteTab];
+  if(!route||!route.stops.length)return;
+  const wh=encodeURIComponent(WAREHOUSE_ADDR);
+  const wps=route.stops.slice(0,-1).map(d=>encodeURIComponent((d.address||'')+', Melbourne VIC, Australia')).join('|');
+  const dest=encodeURIComponent((route.stops[route.stops.length-1].address||'')+', Melbourne VIC, Australia');
+  let url=`https://www.google.com/maps/dir/?api=1&origin=${wh}&destination=${dest}`;
+  if(wps)url+=`&waypoints=${wps}`;
+  window.open(url,'_blank');
 }
 
-function clearAll(){
-  deliveries=[];photos={};currentStop=0;
-  document.getElementById('rawInput').value='';
-  document.getElementById('tblWrap').innerHTML='<div class="empty"><div class="empty-icon">📦</div>粘贴客户信息后<br>点击「解析 &amp; 自动排线」</div>';
-  document.getElementById('statsPanel').style.display='none';
-  document.getElementById('actionBar').style.display='none';
-  document.getElementById('driverModeBtn').style.display='none';
-  document.getElementById('shareBtn').style.display='none';
-  setStatus('idle','等待输入客户信息...');
-  location.hash='';
+// ═══════════════════════════════════════
+// START DELIVERY → save session
+// ═══════════════════════════════════════
+async function startDelivery(){
+  if(!vrpRoutes.length){showToast('请先排线','err');return;}
+  const date=document.getElementById('deliveryDate').value;
+  currentSession={date,driver:driverName,drivers:[...drivers],createdAt:Date.now(),
+    routes:vrpRoutes.map(r=>({...r,stops:r.stops.map(s=>({...s}))})),
+    stops:deliveries.map(s=>({...s}))};
+  const id=await dbSave(currentSession);
+  currentSession.id=id;
+  switchPage('driver');
+  showToast('开始送货！','ok');
 }
 
-// ══════════════════════════════════
+// ═══════════════════════════════════════
 // DRIVER MODE
-// ══════════════════════════════════
-function enterDriverMode(){
-  currentStop=0;
-  document.getElementById('managerView').style.display='none';
-  document.getElementById('driverView').style.display='block';
-  renderDriver();
+// ═══════════════════════════════════════
+function cashTotal(){
+  if(!currentSession)return 0;
+  return currentSession.stops.reduce((s,x)=>s+(x.cash?(parseFloat(x.cashCollected)||0):0),0);
 }
-function exitDriverMode(){
-  if(isDriverOnlyMode)return; // can't go back if opened from link
-  stopCam();
-  document.getElementById('driverView').style.display='none';
-  document.getElementById('managerView').style.display='block';
-}
-
-
-function navToWarehouse(){
-  const wh = '1/41-43 Lexton Road, Box Hill North VIC 3129';
-  const url = 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(wh) + '&travelmode=driving';
-  window.location.href = url;
+function updateCashSummary(){
+  const el=document.getElementById('cashSummaryAmount');
+  const detail=document.getElementById('cashSummaryDetail');
+  if(!el||!currentSession)return;
+  const total=cashTotal();
+  const collected=currentSession.stops.filter(x=>x.cash&&(parseFloat(x.cashCollected)||0)>0).length;
+  const totalCashStops=currentSession.stops.filter(x=>x.cash).length;
+  el.textContent='$'+total.toFixed(2);
+  detail.textContent=`已收 ${collected}/${totalCashStops} 单`;
 }
 
-function renderDriver(){
-  const done=Object.keys(photos).length,total=deliveries.length;
-  document.getElementById('driverProgress').textContent=`已完成 ${done} / ${total} 单`;
-  document.getElementById('progressFill').style.width=`${(done/total)*100}%`;
-
-  if(done===total){
-    document.getElementById('allDoneView').style.display='block';
-    document.getElementById('allDoneSub').textContent=`${total}单 · ${deliveries.reduce((s,d)=>s+d.packages,0)}件 全部完成`;
-    document.getElementById('stopList').innerHTML='';
-    document.getElementById('currentDetail').innerHTML='';
-    // Always show return button; navToWarehouse handles missing address
-    const rhBtn = document.getElementById('returnHomeBtn');
-    if(rhBtn) rhBtn.style.display = '';
+function renderDriverStops(){
+  if(!currentSession){
+    document.getElementById('driverStops').innerHTML=`<div class="empty-state"><div class="icon">🚚</div>请先在排班页排线<br>然后点击「开始送货」</div>`;
     return;
   }
-  document.getElementById('allDoneView').style.display='none';
+  document.getElementById('driverBarName').textContent='司机：'+currentSession.driver;
+  document.getElementById('driverBarDate').textContent=currentSession.date;
+  const container=document.getElementById('driverStops');
+  container.innerHTML='';
 
-  let lHtml='';
-  deliveries.forEach((d,i)=>{
-    const isDone=!!photos[i],isCur=i===currentStop;
-    const nc=isDone?'sn-d':isCur?'sn-c':'sn-p';
-    lHtml+=`<div class="stop-card ${isCur?'active':''} ${isDone?'done':''}" onclick="${isDone?'void 0':'setStop('+i+')'}">
-      <div class="stop-num ${nc}">${isDone?'✓':i+1}</div>
-      <div style="flex:1;min-width:0">
-        <div style="font-weight:700;font-size:14px">${escHtml(d.name)}</div>
-        <div style="font-size:11px;color:var(--mut);font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px">${escHtml(d.address||'地址未填')}</div>
+  const hasCash=currentSession.stops.some(x=>x.cash);
+  if(hasCash){
+    const banner=document.createElement('div');
+    banner.style.cssText='padding:12px 14px 0';
+    banner.innerHTML=`<div class="cash-summary"><div class="cash-summary-icon">💰</div>
+      <div><div class="cash-summary-label">当天现金汇总</div>
+      <div class="cash-summary-amount" id="cashSummaryAmount">$0.00</div>
+      <div class="cash-summary-detail" id="cashSummaryDetail">-</div></div></div>`;
+    container.appendChild(banner);
+  }
+
+  currentSession.stops.forEach((d,i)=>{
+    const addr=(d.address||'')+', Melbourne VIC, Australia';
+    const color=DRIVER_COLORS[(d.driverIdx||0)%DRIVER_COLORS.length];
+    const card=document.createElement('div');
+    card.className='stop-card'+(d.done?' done':'');
+    card.id='dstop-'+i;
+    const photosHtml=(d.photos||[]).map((p,pi)=>
+      `<img class="photo-thumb" src="${p}" onclick="openLightbox('${p}')" alt="照片${pi+1}">`
+    ).join('');
+    const cashHeaderBadge=d.cash
+      ?`<span class="cash-badge" style="margin-left:auto">💰 现金${d.cashCollected?' · $'+parseFloat(d.cashCollected).toFixed(2):''}</span>`
+      :`<span style="margin-left:auto;font-size:12px;color:var(--mut)">无</span>`;
+    const cashInputHtml=d.cash?`
+      <div class="cash-input-area">
+        <label>💰 收到的现金</label>
+        <div class="cash-input-row">
+          <span>$</span>
+          <input class="cash-amount-input" type="number" inputmode="decimal" step="0.01" min="0"
+            placeholder="0.00" value="${d.cashCollected||''}"
+            onchange="saveCash(${i},this.value)" oninput="saveCash(${i},this.value)" id="cash-input-${i}">
+          <span class="cash-saved-badge" id="cash-saved-${i}">${d.cashCollected?'✓ 已记录':''}</span>
+        </div>
+      </div>`:'';
+    card.innerHTML=`
+      <div class="stop-header">
+        <span class="seq-num" style="background:${d.done?'#444':color};color:${(d.driverIdx||0)<2?'#fff':'#0f1117'}">${i+1}</span>
+        <b style="font-size:15px">${esc(d.name)}</b>
+        ${d.driverName?`<span style="font-size:11px;color:var(--mut);margin-left:4px">· ${esc(d.driverName)}</span>`:''}
+        ${cashHeaderBadge}
       </div>
-      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
-        ${d.cash?'<span class="pill pill-grn" style="font-size:10px">💰</span>':''}
-        <span style="font-size:11px;color:var(--mut);font-family:monospace">📦${d.packages}</span>
-      </div>
-    </div>`;
+      <div class="stop-body">
+        <div class="stop-info">
+          <div>📦 <b>${d.packages}</b> 件</div>
+          <div>📍 <b>${esc(d.address)}</b></div>
+          <div>📞 <b><a href="tel:${esc(d.phone||'')}" style="color:var(--accent)">${esc(d.phone||'-')}</a></b></div>
+          <div>⏰ <b>${esc(d.timeSlot||'-')}</b></div>
+          ${d.note?`<div>📝 ${esc(d.note)}</div>`:''}
+        </div>
+        <div class="stop-actions">
+          <button class="btn btn-primary btn-sm" onclick="driverNav('${esc(addr)}')">🗺 导航</button>
+          <button class="btn btn-green btn-sm" id="done-btn-${i}" onclick="markDone(${i})">${d.done?'↩ 撤销':'✓ 已送达'}</button>
+        </div>
+        <div class="photo-area">
+          <label>📸 送货照片</label>
+          <div class="photo-row" id="photos-${i}">
+            ${photosHtml}
+            <label class="photo-upload-btn">＋<input type="file" accept="image/*" capture="environment" onchange="addPhoto(${i},this)"></label>
+          </div>
+        </div>
+        ${cashInputHtml}
+      </div>`;
+    container.appendChild(card);
+    if(i===currentSession.stops.length-1){
+      const ret=document.createElement('div');
+      ret.style.cssText='padding:8px 14px 20px';
+      const btn=document.createElement('button');
+      btn.className='btn btn-green btn-full';
+      btn.innerHTML='🏠 全部送完 · 导航回仓库';
+      btn.onclick=()=>{window.location.href='https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(WAREHOUSE_ADDR);};
+      ret.appendChild(btn);
+      container.appendChild(ret);
+    }
   });
-  document.getElementById('stopList').innerHTML=lHtml;
-
-  const d=deliveries[currentStop];
-  if(!d||photos[currentStop]){
-    document.getElementById('currentDetail').innerHTML=currentStop<deliveries.length-1
-      ?`<button class="btn btn-grn" style="width:100%;justify-content:center;font-size:15px;padding:14px" onclick="setStop(${currentStop+1})">下一单 →</button>`:'';
-    return;
-  }
-
-  const telBtn=d.phone?`<a class="btn btn-blu" style="flex:1;justify-content:center;text-decoration:none" href="tel:${d.phone}">📞 ${d.phone}</a>`:'';
-  const noteHtml=d.note?`<div style="font-size:12px;color:var(--mut);background:var(--s2);border-radius:8px;padding:8px 12px;margin-bottom:14px;font-family:monospace">📝 ${escHtml(d.note)}</div>`:'';
-
-  const navHref = 'https://maps.google.com/maps?daddr=' + encodeURIComponent(cleanAddr(d.address) + ', Melbourne VIC, Australia');
-  document.getElementById('currentDetail').innerHTML=`
-    <div class="detail-card">
-      <div class="detail-label">当前 #${currentStop+1}</div>
-      <div class="detail-name">${escHtml(d.name)}</div>
-      <div class="detail-addr">📍 ${escHtml(d.address||'地址未填')}</div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
-        <span class="pill pill-acc">⏰ ${escHtml(d.timeSlot)}</span>
-        <span class="pill pill-dim">📦 ${d.packages} 件</span>
-        ${d.cash?'<span class="pill pill-grn">💰 收现金</span>':''}
-      </div>
-      ${noteHtml}
-      <div class="detail-btns">${telBtn}
-        <a class="btn btn-ghost" style="flex:1;justify-content:center;text-decoration:none"
-          href="${navHref}" target="_blank" rel="noopener">🗺 导航</a>
-      </div>
-      <hr style="border:none;border-top:1px solid var(--bd);margin:14px 0">
-      <button class="btn btn-acc" style="width:100%;justify-content:center;font-size:15px;padding:14px"
-        onclick="openPhotoModal(${currentStop})">📸 拍照 · 完成此单</button>
-    </div>`;
-
-  // Add return-to-warehouse button for last stop
-  if(currentStop===deliveries.length-1){
-    const returnBtn = document.createElement('a');
-    returnBtn.href = 'https://www.google.com/maps/dir/?api=1&destination=1%2F41-43%20Lexton%20Road%2C%20Box%20Hill%20North%20VIC%203129&travelmode=driving';
-    returnBtn.target = '_blank';
-    returnBtn.rel = 'noopener';
-    returnBtn.className = 'btn btn-grn';
-    returnBtn.style.cssText = 'width:100%;justify-content:center;text-decoration:none;margin-top:12px;display:flex';
-    returnBtn.textContent = '🏠 最后一单 · 导航回仓库';
-    document.getElementById('currentDetail').appendChild(returnBtn);
-  }
+  updateCashSummary();
 }
 
-function setStop(i){currentStop=i;renderDriver();}
-
-// ══════════════════════════════════
-// PHOTO MODAL
-// ══════════════════════════════════
-function openPhotoModal(idx){
-  modalIdx=idx;pendingPhoto=null;
-  const d=deliveries[idx];
-  document.getElementById('modalSub').textContent=`客户：${d.name} · ${d.packages} 件`;
-  document.getElementById('camVideo').style.display='none';
-  document.getElementById('photoPreview').style.display='none';
-  document.getElementById('camPh').style.display='flex';
-  document.getElementById('doneBadge').style.display='none';
-  document.getElementById('camErr').style.display='none';
-  setModalBtns('initial');
-  document.getElementById('photoModal').classList.add('open');
+function driverNav(addr){window.location.href='https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(addr);}
+function markDone(idx){
+  if(!currentSession)return;
+  currentSession.stops[idx].done=!currentSession.stops[idx].done;
+  dbPut(currentSession);
+  const card=document.getElementById('dstop-'+idx);
+  if(card)card.className='stop-card'+(currentSession.stops[idx].done?' done':'');
+  const btn=document.getElementById('done-btn-'+idx);
+  if(btn)btn.textContent=currentSession.stops[idx].done?'↩ 撤销':'✓ 已送达';
+  updateCashSummary();
 }
-function closeModal(){stopCam();document.getElementById('photoModal').classList.remove('open');modalIdx=null;pendingPhoto=null;}
-
-function setModalBtns(state){
-  const c=document.getElementById('modalBtns');
-  if(state==='initial'){
-    c.innerHTML=`<button class="btn btn-acc" onclick="startCam()">📷 打开摄像头</button>
-      <button class="btn btn-ghost" onclick="document.getElementById('fileInput').click()">🖼 选择照片</button>`;
-  } else if(state==='camera'){
-    c.innerHTML=`<button class="btn btn-acc" onclick="snap()" style="font-size:16px;padding:16px">● 拍照</button>`;
-  } else if(state==='preview'){
-    c.innerHTML=`<button class="btn btn-ghost" onclick="retake()">↺ 重拍</button>
-      <button class="btn btn-grn" onclick="confirmPhoto()">✓ 确认完成此单</button>`;
-  }
+function saveCash(stopIdx,value){
+  if(!currentSession)return;
+  const amount=parseFloat(value)||0;
+  currentSession.stops[stopIdx].cashCollected=amount>0?amount:null;
+  dbPut(currentSession);
+  const badge=document.getElementById('cash-saved-'+stopIdx);
+  if(badge)badge.textContent=amount>0?'✓ 已记录':'';
+  updateCashSummary();
+}
+function addPhoto(stopIdx,input){
+  const file=input.files[0];if(!file)return;
+  const reader=new FileReader();
+  reader.onload=async e=>{
+    const dataUrl=e.target.result;
+    if(!currentSession.stops[stopIdx].photos)currentSession.stops[stopIdx].photos=[];
+    currentSession.stops[stopIdx].photos.push(dataUrl);
+    await dbPut(currentSession);
+    const row=document.getElementById('photos-'+stopIdx);
+    if(row){
+      const img=document.createElement('img');
+      img.className='photo-thumb';img.src=dataUrl;img.onclick=()=>openLightbox(dataUrl);
+      row.insertBefore(img,row.lastElementChild);
+    }
+    showToast('照片已保存','ok');input.value='';
+  };
+  reader.readAsDataURL(file);
 }
 
-async function startCam(){
-  document.getElementById('camErr').style.display='none';
+// ═══════════════════════════════════════
+// HISTORY
+// ═══════════════════════════════════════
+async function loadHistory(){
+  const list=document.getElementById('historyList');
+  list.innerHTML='<div style="padding:20px;text-align:center;color:var(--mut)">加载中...</div>';
   try{
-    camStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'},audio:false});
-    const v=document.getElementById('camVideo');
-    v.srcObject=camStream;v.style.display='block';
-    document.getElementById('camPh').style.display='none';
-    document.getElementById('photoPreview').style.display='none';
-    setModalBtns('camera');
-  }catch(e){
-    const el=document.getElementById('camErr');
-    el.textContent='无法访问摄像头，请允许权限或使用「选择照片」';
-    el.style.display='block';
+    const sessions=await dbAll();
+    if(!sessions.length){list.innerHTML='<div class="empty-state"><div class="icon">🕐</div>暂无历史记录</div>';return;}
+    list.innerHTML='';
+    sessions.forEach(s=>{
+      const stops=s.stops||[];
+      const done=stops.filter(x=>x.done).length,total=stops.length;
+      const pkgs=stops.reduce((a,x)=>a+x.packages,0);
+      const cashStops=stops.filter(x=>x.cash).length;
+      const cashAmt=stops.reduce((a,x)=>a+(x.cash?(parseFloat(x.cashCollected)||0):0),0);
+      const photos=stops.reduce((a,x)=>a+(x.photos?x.photos.length:0),0);
+      const div=document.createElement('div');
+      div.className='history-item';
+      div.innerHTML=`
+        <div style="display:flex;justify-content:space-between;align-items:flex-start">
+          <div class="history-date">📅 ${esc(s.date)}</div>
+          <span style="font-size:12px;color:${done===total?'var(--green)':'var(--yellow)'}">${done}/${total} 已送达</span>
+        </div>
+        <div class="history-meta">
+          👤 ${esc(s.driver)} &nbsp;|&nbsp; 📦 ${total}单/${pkgs}件
+          ${cashStops?` &nbsp;|&nbsp; 💰 现金${cashStops}单${cashAmt>0?' · <b style="color:var(--yellow)">$'+cashAmt.toFixed(2)+'</b>':''}` :''}
+          ${photos?` &nbsp;|&nbsp; 📷 ${photos}张`:''}
+        </div>
+        <div class="history-tags">
+          ${stops.slice(0,5).map(x=>`<span class="tag">${esc(x.name)}</span>`).join('')}
+          ${stops.length>5?`<span class="tag">+${stops.length-5}</span>`:''}
+        </div>`;
+      div.onclick=()=>openDetail(s);
+      list.appendChild(div);
+    });
+  }catch(e){list.innerHTML='<div class="empty-state"><div class="icon">⚠️</div>加载失败</div>';}
+}
+
+function openDetail(session){
+  document.getElementById('detailTitle').textContent=session.date+' · '+session.driver;
+  const content=document.getElementById('detailContent');content.innerHTML='';
+  const stops=session.stops||[];
+  const cashStops=stops.filter(x=>x.cash);
+  if(cashStops.length>0){
+    const totalCash=cashStops.reduce((a,x)=>a+(parseFloat(x.cashCollected)||0),0);
+    const recorded=cashStops.filter(x=>parseFloat(x.cashCollected)>0).length;
+    const banner=document.createElement('div');banner.style.cssText='margin:10px 14px 0';
+    banner.innerHTML=`<div class="cash-summary"><div class="cash-summary-icon">💰</div>
+      <div><div class="cash-summary-label">当天现金收取总额</div>
+      <div class="cash-summary-amount">$${totalCash.toFixed(2)}</div>
+      <div class="cash-summary-detail">已记录 ${recorded}/${cashStops.length} 单</div></div></div>`;
+    content.appendChild(banner);
   }
+  stops.forEach((d,i)=>{
+    const div=document.createElement('div');div.className='detail-stop';
+    const photos=(d.photos||[]).map(p=>`<img class="detail-photo" src="${p}" onclick="openLightbox('${p}')" alt="">`).join('');
+    div.innerHTML=`
+      <div style="display:flex;align-items:center;gap:10px">
+        <span class="seq-num" style="background:${d.done?'var(--green)':'var(--accent)'};color:#fff">${i+1}</span>
+        <b style="font-size:15px">${esc(d.name)}</b>
+        ${d.done?'<span style="margin-left:auto;font-size:12px;color:var(--green)">✓ 送达</span>':'<span style="margin-left:auto;font-size:12px;color:var(--red)">未送达</span>'}
+      </div>
+      <div class="detail-stop-meta">
+        <div>📦 ${d.packages}件 &nbsp; ${d.cash?`<span class="cash-badge">💰 现金${d.cashCollected?' · $'+parseFloat(d.cashCollected).toFixed(2):' · 未记录'}</span>`:'<span style="color:var(--mut);font-size:12px">无</span>'}</div>
+        <div>📍 ${esc(d.address)}</div>
+        <div>📞 ${esc(d.phone||'-')}</div>
+        <div>⏰ ${esc(d.timeSlot||'-')}</div>
+        ${d.note?`<div>📝 ${esc(d.note)}</div>`:''}
+      </div>
+      ${photos?`<div class="detail-photos">${photos}</div>`:'<div style="font-size:12px;color:var(--mut);margin-top:8px">📷 无照片</div>'}`;
+    content.appendChild(div);
+  });
+  document.getElementById('detailOverlay').classList.add('open');
 }
-function stopCam(){if(camStream){camStream.getTracks().forEach(t=>t.stop());camStream=null;}}
+function closeDetail(){document.getElementById('detailOverlay').classList.remove('open');}
 
-function snap(){
-  const v=document.getElementById('camVideo');
-  const c=document.getElementById('snapCanvas');
-  c.width=v.videoWidth;c.height=v.videoHeight;
-  c.getContext('2d').drawImage(v,0,0);
-  showPreview(c.toDataURL('image/jpeg',0.82));
+// ═══════════════════════════════════════
+// COPY & CLEAR
+// ═══════════════════════════════════════
+function copyDriverSheet(){
+  const date=document.getElementById('deliveryDate').value;
+  let txt=`🚚 环球伙拼送货单 ${date}\n${'─'.repeat(36)}\n\n`;
+  vrpRoutes.forEach(route=>{
+    txt+=`【司机：${route.driverName}】${route.stops.length}单 · ${route.distKm}km\n`;
+    route.stops.forEach((d,i)=>{
+      txt+=`  ${i+1}. ${d.name} 📦${d.packages}件${d.cash?' 💰现金':''}\n`;
+      txt+=`     📍 ${d.address}\n     📞 ${d.phone||'-'} ⏰ ${d.timeSlot||'-'}\n`;
+      if(d.note)txt+=`     📝 ${d.note}\n`;
+    });
+    txt+='\n';
+  });
+  const pkgs=deliveries.reduce((s,d)=>s+d.packages,0);
+  const cash=deliveries.filter(d=>d.cash).length;
+  txt+=`${'─'.repeat(36)}\n合计：${deliveries.length}单/${pkgs}件/现金${cash}单`;
+  navigator.clipboard.writeText(txt).then(()=>showToast('已复制','ok')).catch(()=>showToast('复制失败','err'));
 }
-function handleFile(e){
-  const f=e.target.files[0];if(!f)return;
-  const r=new FileReader();r.onload=ev=>showPreview(ev.target.result);r.readAsDataURL(f);
-  stopCam();e.target.value='';
-}
-function showPreview(dataUrl){
-  stopCam();pendingPhoto=dataUrl;
-  const img=document.getElementById('photoPreview');
-  img.src=dataUrl;img.style.display='block';
-  document.getElementById('camVideo').style.display='none';
-  document.getElementById('camPh').style.display='none';
-  document.getElementById('doneBadge').style.display='block';
-  setModalBtns('preview');
-}
-function retake(){
-  pendingPhoto=null;
-  document.getElementById('photoPreview').style.display='none';
-  document.getElementById('doneBadge').style.display='none';
-  document.getElementById('camPh').style.display='flex';
-  setModalBtns('initial');
-}
-function confirmPhoto(){
-  if(!pendingPhoto||modalIdx===null)return;
-  photos[modalIdx]=pendingPhoto;
-  closeModal();
-  if(currentStop<deliveries.length-1)currentStop++;
-  toast(`第 ${modalIdx+1} 单已完成 ✓`,'ok');
-  renderDriver();
+function clearPlan(){
+  deliveries=[];vrpRoutes=[];imgBase64=null;activeRouteTab=0;
+  document.getElementById('rawInput').value='';
+  document.getElementById('imgFile').value='';
+  document.getElementById('imgPreview').style.display='none';
+  document.getElementById('imgParseBtn').disabled=true;
+  document.getElementById('routeCard').style.display='none';
+  document.getElementById('tableWrap').innerHTML='';
+  if(leafletMap){leafletMap.remove();leafletMap=null;}
+  currentSession=null;
+  setStatus('idle','请录入客户信息...');
 }
 
-// ══════════════════════════════════
-// UTILS
-// ══════════════════════════════════
+// ═══════════════════════════════════════
+// LIGHTBOX & UI
+// ═══════════════════════════════════════
+function openLightbox(src){document.getElementById('lightboxImg').src=src;document.getElementById('lightbox').classList.add('open');}
+function closeLightbox(){document.getElementById('lightbox').classList.remove('open');}
 function setStatus(type,msg){
-  const el=document.getElementById('statusBar');
-  el.className='status'+(type==='ok'?' ok':type==='err'?' err':type==='busy'?' busy':'');
-  el.innerHTML=type==='busy'?`<div class="spin"></div>${msg}`:msg;
+  const bar=document.getElementById('statusBar');
+  if(type==='loading')bar.innerHTML=`<div class="spinner"></div>${msg}`;
+  else if(type==='success')bar.innerHTML=`<span style="color:var(--green)">●</span> ${msg}`;
+  else if(type==='error')bar.innerHTML=`<span style="color:var(--red)">●</span> ${msg}`;
+  else bar.innerHTML=msg;
 }
-function toast(msg,type){
+let toastT;
+function showToast(msg,type){
   const t=document.getElementById('toast');
-  t.textContent=(type==='ok'?'✓ ':'✕ ')+msg;
-  t.className='toast show '+(type==='ok'?'ok':'err');
-  setTimeout(()=>t.className='toast',3000);
+  t.textContent=(type==='ok'?'✓ ':'⚠ ')+msg;
+  t.classList.add('show');clearTimeout(toastT);
+  toastT=setTimeout(()=>t.classList.remove('show'),3000);
 }
-function escHtml(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
-function escAttr(s){return String(s||'').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
-</script>
 
+// ═══════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════
+(async()=>{
+  await openDB();
+  document.getElementById('deliveryDate').value=new Date().toISOString().split('T')[0];
+
+  // Restore ORS key
+  const savedKey=getOrsKey();
+  if(savedKey){
+    document.getElementById('orsKey').value=savedKey;
+    document.getElementById('keyStatus').textContent='已保存';
+  }
+
+  // Restore driver
+  const saved=localStorage.getItem('driverName');
+  if(saved){
+    document.getElementById('driverNameInput').value=saved;
+    confirmDriver();
+  }
+
+  // PWA manifest
+  const mf={name:'环球伙拼送货',short_name:'送货排班',display:'standalone',
+    background_color:'#0f1117',theme_color:'#0f1117',start_url:'./',
+    icons:[{src:'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🚚</text></svg>',sizes:'any',type:'image/svg+xml'}]};
+  const blob=new Blob([JSON.stringify(mf)],{type:'application/json'});
+  document.getElementById('manifestLink').href=URL.createObjectURL(blob);
+})();
+</script>
 </body>
 </html>
