@@ -74,10 +74,10 @@ textarea,input[type=text],input[type=url],input[type=date],input[type=number]{ba
 textarea{width:100%;resize:vertical;}
 input[type=text]:focus,input[type=date]:focus{border-color:var(--accent);}
 label{display:block;font-size:12px;color:var(--mut);margin-bottom:5px;}
-.drop-zone{border:2px dashed var(--border);border-radius:8px;padding:24px 16px;text-align:center;cursor:pointer;transition:all .2s;position:relative;}
+.drop-zone{border:2px dashed var(--border);border-radius:8px;padding:14px 16px;text-align:center;cursor:pointer;transition:all .2s;position:relative;}
 .drop-zone:hover,.drop-zone.drag-over{border-color:var(--accent);background:rgba(79,142,247,.05);}
 .drop-zone input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;}
-#imgPreview{max-width:100%;max-height:180px;border-radius:6px;margin-top:10px;display:none;}
+#imgPreview{max-width:100%;max-height:100px;border-radius:6px;margin-top:8px;display:none;}
 
 /* ── Buttons ── */
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:11px 18px;border-radius:10px;border:none;font-size:14px;font-weight:600;cursor:pointer;transition:all .18s;white-space:nowrap;font-family:inherit;}
@@ -225,27 +225,13 @@ tr.drag-over td{background:rgba(79,142,247,.1);}
   </div>
 </div>
 
+<!-- Hidden ORS elements (used by JS only) -->
+<input type="hidden" id="orsKey">
+<span id="keyStatus" style="display:none"></span>
+<span id="keyStatusBadge" style="display:none"></span>
+
 <!-- ══ PAGE: 排班 ══ -->
 <div class="page active" id="page-plan">
-
-    <details style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;">
-      <summary style="font-size:12px;color:var(--mut);cursor:pointer;user-select:none;list-style:none;display:flex;align-items:center;gap:6px">
-        🔑 <span>高级：ORS API Key（可选，用于更精准的路线优化）</span>
-        <span style="margin-left:auto;font-size:11px" id="keyStatusBadge"></span>
-      </summary>
-      <div style="margin-top:10px">
-        <div style="display:flex;gap:8px">
-          <input type="text" id="orsKey" placeholder="粘贴 HeiGIT / ORS API Key" oninput="saveOrsKey()"
-            style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12px;padding:8px 10px;outline:none;font-family:inherit;">
-          <button class="btn btn-secondary btn-sm" onclick="testOrsKey()">测试</button>
-        </div>
-        <div style="font-size:11px;color:var(--mut);margin-top:6px;line-height:1.6">
-          不填也可正常使用（本地2-opt优化）。填了之后走 ORS Vroom VRP 引擎，结果更精准。<br>
-          <span id="keyStatus"></span>
-        </div>
-      </div>
-    </details>
-  </div>
 
   <div class="date-driver-row" id="dateDriverRow" style="display:none">
     <span style="font-size:12px;color:var(--mut)">📅</span>
@@ -253,23 +239,23 @@ tr.drag-over td{background:rgba(79,142,247,.1);}
   </div>
 
   <!-- Drivers config -->
-  <div class="card" style="margin:12px;flex-shrink:0" id="driversCard" style="display:none">
-    <div class="card-header">
+  <div class="card" style="margin:8px 12px 0;flex-shrink:0;display:none" id="driversCard">
+    <div class="card-header" style="padding:8px 14px">
       <span class="seq-num color-0" style="color:#fff">👥</span>
       <span style="font-weight:700">司机列表</span>
       <span style="font-size:12px;color:var(--mut);margin-left:6px">（多司机自动分配路线）</span>
     </div>
-    <div class="drivers-row" id="driverTagsRow"></div>
-    <div style="padding:8px 14px 12px;display:flex;gap:8px;align-items:center">
+    <div class="drivers-row" id="driverTagsRow" style="padding:8px 14px 4px"></div>
+    <div style="padding:6px 14px 10px;display:flex;gap:8px;align-items:center">
       <input class="add-driver-input" type="text" id="newDriverInput" placeholder="添加司机姓名"
         maxlength="20" onkeydown="if(event.key==='Enter')addDriver()">
       <button class="btn btn-secondary btn-sm" onclick="addDriver()">＋ 添加</button>
     </div>
   </div>
 
-  <!-- Input -->
-  <div class="card" style="margin:0 12px 12px;flex-shrink:0">
-    <div class="card-header">
+  <!-- Input card -->
+  <div class="card" style="margin:8px 12px 8px;flex-shrink:0">
+    <div class="card-header" style="padding:8px 14px">
       <span class="seq-num color-0" style="color:#fff">1</span>
       <span style="font-weight:700">录入客户信息</span>
     </div>
@@ -279,7 +265,7 @@ tr.drag-over td{background:rgba(79,142,247,.1);}
     </div>
     <div class="tab-pane active" id="pane-text">
       <label>粘贴客户信息（任意格式均可）</label>
-      <textarea id="rawInput" rows="7" placeholder="例如：&#10;张三，3件，3 Oak St Doncaster，0412345678，下午2点，转账&#10;李四，2件，25 Smith Rd Box Hill，0423456789，下午3点，现金"></textarea>
+      <textarea id="rawInput" rows="4" placeholder="例如：&#10;张三，3件，3 Oak St Doncaster，0412345678，下午2点，转账&#10;李四，2件，25 Smith Rd Box Hill，0423456789，下午3点，现金"></textarea>
       <button class="btn btn-primary btn-full" id="parseTextBtn" onclick="doParseText()">✨ AI 解析 &amp; VRP 优化路线</button>
     </div>
     <div class="tab-pane" id="pane-image">
@@ -606,9 +592,8 @@ async function callClaude(messages, systemOverride){
 
 async function callOpenRouter(messages, systemOverride, apiKey){
   const system = systemOverride || SYSTEM;
-  // Convert image blocks to OpenRouter format
   const convertedMessages = messages.map(msg => {
-    if(typeof msg.content === 'string') return msg;
+    if(typeof msg.content === 'string') return {role:msg.role, content:msg.content};
     const parts = msg.content.map(block => {
       if(block.type==='text') return {type:'text', text:block.text};
       if(block.type==='image') return {
@@ -626,7 +611,7 @@ async function callOpenRouter(messages, systemOverride, apiKey){
       'Content-Type':'application/json',
       'Authorization':'Bearer '+apiKey,
       'HTTP-Referer':'https://cgwhx1172721-dotcom.github.io',
-      'X-Title':'环球伙拼送货排班'
+      'X-Title':'Delivery App'
     },
     body:JSON.stringify({
       model:'google/gemini-2.0-flash-exp:free',
@@ -637,10 +622,12 @@ async function callOpenRouter(messages, systemOverride, apiKey){
   });
   if(!r.ok){
     const err=await r.json().catch(()=>({}));
-    throw new Error(err.error?.message||'OpenRouter '+r.status);
+    throw new Error(err.error?.message||'OpenRouter HTTP '+r.status);
   }
   const d=await r.json();
-  return d.choices?.[0]?.message?.content||'';
+  const content = d.choices?.[0]?.message?.content;
+  if(!content) throw new Error('OpenRouter returned empty response');
+  return content;
 }
 
 async function callGemini(messages, systemOverride, apiKey){
