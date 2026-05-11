@@ -193,7 +193,7 @@ tr.drag-over td{background:rgba(79,142,247,.1);}
 <!-- ══ HEADER ══ -->
 <div class="app-header">
   <span style="font-size:20px">🚚</span>
-  <div><div class="app-title">环球伙拼送货</div><div class="app-sub">v8 · VRP优化引擎</div></div>
+  <div><div class="app-title">环球伙拼送货</div><div class="app-sub">v9 · Gemini免费引擎</div></div>
   <div class="header-right">
     <div class="driver-chip" onclick="changeDriver()" id="driverChip" style="display:none">
       👤 <span id="driverChipName"></span>
@@ -208,15 +208,15 @@ tr.drag-over td{background:rgba(79,142,247,.1);}
   <!-- Claude API Key — required -->
   <div style="padding:10px 12px 0;flex-shrink:0">
     <div style="background:rgba(79,142,247,.08);border:1px solid rgba(79,142,247,.3);border-radius:8px;padding:12px 14px;">
-      <div style="font-size:12px;color:var(--accent);font-weight:700;margin-bottom:8px">🤖 Claude API Key（必填，用于 AI 识别和路线优化）</div>
+      <div style="font-size:12px;color:var(--accent);font-weight:700;margin-bottom:8px">🤖 Gemini API Key（必填 · 完全免费）</div>
       <div style="display:flex;gap:8px">
-        <input type="password" id="claudeKey" placeholder="sk-ant-api03-..." oninput="saveClaudeKey()"
+        <input type="password" id="claudeKey" placeholder="AIzaSy..." oninput="saveClaudeKey()"
           style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12px;padding:8px 10px;outline:none;font-family:inherit;transition:border-color .2s"
           onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='var(--border)'">
         <button class="btn btn-secondary btn-sm" onclick="toggleClaudeKeyVisibility()">👁</button>
       </div>
       <div style="font-size:11px;color:var(--mut);margin-top:6px;line-height:1.6">
-        在 <a href="https://console.anthropic.com/settings/keys" target="_blank" style="color:var(--accent)">console.anthropic.com/settings/keys</a> 免费获取。Key 仅存本地，不会上传。<br>
+        在 <a href="https://aistudio.google.com/apikey" target="_blank" style="color:var(--accent)">aistudio.google.com/apikey</a> 免费获取（每天1500次，无需信用卡）。Key 仅存本地。<br>
         <span id="claudeKeyStatus"></span>
       </div>
     </div>
@@ -555,7 +555,7 @@ dz.addEventListener('drop',e=>{
 });
 
 // ═══════════════════════════════════════
-// CLAUDE API — extract delivery info
+// GEMINI API — free tier, 1500 req/day
 // ═══════════════════════════════════════
 const SYSTEM=`你是澳洲墨尔本送货信息提取助手。只返回JSON数组，无其他文字：
 [{"name":"姓名","packages":件数,"address":"完整地址含suburb如25 Smith Rd Box Hill VIC","phone":"电话","timeSlot":"时间","cash":true或false,"note":"备注或空字符串"}]
@@ -563,28 +563,48 @@ cash=true=需收现金。地址必须含suburb和VIC。`;
 
 async function callClaude(messages, systemOverride){
   const apiKey = getClaudeKey();
-  if(!apiKey) throw new Error('请先在页面顶部填入 Claude API Key');
-  const r=await fetch('https://api.anthropic.com/v1/messages',{
+  if(!apiKey) throw new Error('请先填入 Gemini API Key');
+
+  // Convert from Anthropic message format to Gemini format
+  const system = systemOverride || SYSTEM;
+  const parts = [];
+
+  for(const msg of messages){
+    if(typeof msg.content === 'string'){
+      parts.push({text: msg.content});
+    } else if(Array.isArray(msg.content)){
+      for(const block of msg.content){
+        if(block.type==='text') parts.push({text: block.text});
+        if(block.type==='image'){
+          parts.push({
+            inline_data:{
+              mime_type: block.source.media_type,
+              data: block.source.data
+            }
+          });
+        }
+      }
+    }
+  }
+
+  const body = {
+    system_instruction:{parts:[{text: system}]},
+    contents:[{role:'user', parts}],
+    generationConfig:{temperature:0.1, maxOutputTokens:3000}
+  };
+
+  const url=`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+  const r=await fetch(url,{
     method:'POST',
-    headers:{
-      'Content-Type':'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version':'2023-06-01',
-      'anthropic-dangerous-direct-browser-access':'true'
-    },
-    body:JSON.stringify({
-      model:'claude-sonnet-4-20250514',
-      max_tokens:3000,
-      system: systemOverride || SYSTEM,
-      messages
-    })
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(body)
   });
   if(!r.ok){
     const err=await r.json().catch(()=>({}));
-    throw new Error(err.error?.message||'Claude API '+r.status);
+    throw new Error(err.error?.message||'Gemini API '+r.status);
   }
   const d=await r.json();
-  return d.content.map(b=>b.text||'').join('');
+  return d.candidates?.[0]?.content?.parts?.map(p=>p.text||'').join('')||'';
 }
 function parseJSON(raw){
   return JSON.parse(raw.trim().replace(/^```json\s*/,'').replace(/\s*```$/,'').trim());
@@ -731,72 +751,23 @@ async function runOrsVRP(arr,coords,key){
 
   setStatus('loading','通过 Claude 代理调用 ORS VRP 优化...');
 
-  // Use Claude tool_use to make the ORS HTTP call server-side (no CORS)
+  // Use Gemini to proxy the ORS call server-side
   let result;
   try{
-    const claudeResp=await fetch('https://api.anthropic.com/v1/messages',{
-      method:'POST',
-      headers:{
-        'Content-Type':'application/json',
-        'x-api-key': getClaudeKey(),
-        'anthropic-version':'2023-06-01',
-        'anthropic-dangerous-direct-browser-access':'true'
-      },
-      body:JSON.stringify({
-        model:'claude-sonnet-4-20250514',
-        max_tokens:4096,
-        tools:[{
-          name:'call_ors_optimization',
-          description:'Call the OpenRouteService /optimization endpoint with the given payload and return the raw JSON response body as a string.',
-          input_schema:{
-            type:'object',
-            properties:{
-              url:{type:'string'},
-              authorization:{type:'string'},
-              payload:{type:'object'}
-            },
-            required:['url','authorization','payload']
-          }
-        }],
-        tool_choice:{type:'any'},
-        messages:[{
-          role:'user',
-          content:`Please call the ORS optimization API with these exact parameters and return the complete raw JSON response. Do not modify anything.
+    const proxyPrompt=`Make an HTTP POST request to the ORS optimization API and return the complete raw JSON response.
 
 URL: https://api.openrouteservice.org/optimization
 Authorization: ${authHeader}
-Payload: ${JSON.stringify(vrpPayload)}`
-        }]
-      })
-    });
+Content-Type: application/json
+Body: ${JSON.stringify(vrpPayload)}
 
-    if(!claudeResp.ok) throw new Error('Claude proxy HTTP '+claudeResp.status);
-    const claudeData=await claudeResp.json();
+Return ONLY the raw JSON response body, nothing else.`;
 
-    // Find tool_use result block
-    const toolUse=claudeData.content.find(b=>b.type==='tool_use');
-    const textBlock=claudeData.content.find(b=>b.type==='text');
-
-    // Claude will return the ORS response embedded in its reply
-    // It either used tool (input has the call details) or returned text with the JSON
-    let orsJson=null;
-
-    if(textBlock&&textBlock.text){
-      // Extract JSON from Claude's text response
-      const txt=textBlock.text;
-      const jsonMatch=txt.match(/\{[\s\S]*"routes"[\s\S]*\}/);
-      if(jsonMatch){
-        try{orsJson=JSON.parse(jsonMatch[0]);}catch(e){}
-      }
-    }
-
-    // If Claude couldn't actually call ORS (tool_use is client-side in this context),
-    // fall back to direct fetch attempt then local
-    if(!orsJson){
-      throw new Error('proxy_fallback');
-    }
-
-    result=orsJson;
+    const txt = await callClaude([{role:'user',content:proxyPrompt}],
+      'You are an HTTP proxy assistant. Return only raw JSON responses, no explanation.');
+    const jsonMatch = txt.match(/\{[\s\S]*"routes"[\s\S]*\}/);
+    if(jsonMatch) result = JSON.parse(jsonMatch[0]);
+    else throw new Error('proxy_fallback');
 
   }catch(e){
     // Final fallback: try direct ORS call (may work on some networks)
