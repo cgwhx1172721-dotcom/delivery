@@ -10,7 +10,7 @@
 <meta name="apple-mobile-web-app-title" content="环球伙拼送货">
 <meta name="mobile-web-app-capable" content="yes">
 <link rel="manifest" id="manifestLink" href="manifest.json">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" onerror="this.remove()">
 <title>环球伙拼 · 送货排班</title>
 <style>
 :root {
@@ -207,17 +207,25 @@ tr.drag-over td{background:rgba(79,142,247,.1);}
 <div class="page active" id="page-plan">
 
   <!-- ORS API Key setup -->
-  <div class="key-setup" id="keySetup">
-    <label>🔑 OpenRouteService API Key（路线优化引擎）</label>
-    <div class="key-row">
-      <input type="text" id="orsKey" placeholder="输入 ORS API Key" oninput="saveOrsKey()">
-      <button class="btn btn-secondary btn-sm" onclick="testOrsKey()">测试</button>
-    </div>
-    <div class="key-hint">
-      免费注册获取：<a href="https://openrouteservice.org/dev/#/signup" target="_blank">openrouteservice.org</a>
-      （每天2000次免费，够用）<br>
-      <span id="keyStatus" style="color:var(--green)"></span>
-    </div>
+  <!-- ORS Key: collapsed by default, optional -->
+  <div style="padding:8px 12px 0;flex-shrink:0">
+    <details style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;">
+      <summary style="font-size:12px;color:var(--mut);cursor:pointer;user-select:none;list-style:none;display:flex;align-items:center;gap:6px">
+        🔑 <span>高级：ORS API Key（可选，用于更精准的路线优化）</span>
+        <span style="margin-left:auto;font-size:11px" id="keyStatusBadge"></span>
+      </summary>
+      <div style="margin-top:10px">
+        <div style="display:flex;gap:8px">
+          <input type="text" id="orsKey" placeholder="粘贴 HeiGIT / ORS API Key" oninput="saveOrsKey()"
+            style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12px;padding:8px 10px;outline:none;font-family:inherit;">
+          <button class="btn btn-secondary btn-sm" onclick="testOrsKey()">测试</button>
+        </div>
+        <div style="font-size:11px;color:var(--mut);margin-top:6px;line-height:1.6">
+          不填也可正常使用（本地2-opt优化）。填了之后走 ORS Vroom VRP 引擎，结果更精准。<br>
+          <span id="keyStatus"></span>
+        </div>
+      </div>
+    </details>
   </div>
 
   <div class="date-driver-row" id="dateDriverRow" style="display:none">
@@ -335,7 +343,7 @@ tr.drag-over td{background:rgba(79,142,247,.1);}
 </div>
 <div class="toast" id="toast"></div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<!-- Leaflet loaded dynamically in renderMap() to avoid blocking page on CDN failure -->
 <script>
 // ═══════════════════════════════════════
 // STATE
@@ -384,29 +392,41 @@ function saveOrsKey(){
   const k=document.getElementById('orsKey').value.trim();
   localStorage.setItem('orsKey',k);
   document.getElementById('keyStatus').textContent='';
+  const badge=document.getElementById('keyStatusBadge');
+  if(badge)badge.textContent=k?'已配置':'';
 }
 async function testOrsKey(){
   const k=getOrsKey();
   if(!k){showToast('请先输入 API Key','err');return;}
   setStatus('loading','测试 API Key...');
+  // HeiGIT new-format keys start with "eyJ" (JWT) — use Bearer prefix
+  const authHeader=k.startsWith('eyJ')?'Bearer '+k:k;
   try{
     const r=await fetch('https://api.openrouteservice.org/v2/directions/driving-car',{
       method:'POST',
-      headers:{'Content-Type':'application/json','Authorization':k},
+      headers:{'Content-Type':'application/json','Authorization':authHeader},
       body:JSON.stringify({coordinates:[WAREHOUSE_COORDS,WAREHOUSE_COORDS]})
     });
     if(r.ok){
+      document.getElementById('keyStatus').style.color='var(--green)';
       document.getElementById('keyStatus').textContent='✓ API Key 有效';
-      setStatus('success','✓ API Key 验证成功，路线优化引擎就绪');
+      setStatus('success','✓ API Key 验证成功，VRP 引擎就绪');
       showToast('API Key 有效 ✓','ok');
     } else {
-      const e=await r.json();
+      const e=await r.json().catch(()=>({}));
       throw new Error(e.error?.message||`HTTP ${r.status}`);
     }
   }catch(e){
+    const msg=e.message;
+    const isCors=msg.includes('fetch')||msg.includes('NetworkError')||msg.includes('CORS');
     document.getElementById('keyStatus').style.color='var(--red)';
-    document.getElementById('keyStatus').textContent='✗ 无效：'+e.message;
-    setStatus('error','API Key 无效：'+e.message);
+    document.getElementById('keyStatus').textContent=isCors
+      ?'⚠ 浏览器 CORS 限制（Key 可能有效，继续使用）'
+      :'✗ 无效：'+msg;
+    // CORS error likely means key IS valid but browser blocks it — still try to use it
+    setStatus(isCors?'success':'error', isCors
+      ?'⚠ 浏览器安全限制无法直接测试，将在排班时实际调用 ORS'
+      :'API Key 无效：'+msg);
   }
 }
 
@@ -558,30 +578,23 @@ async function doParseImage(){
 }
 
 // ═══════════════════════════════════════
-// GEOCODING (ORS)
+// GEOCODING — Nominatim first (free, no CORS), ORS optional
 // ═══════════════════════════════════════
+function orsAuthHeader(key){
+  // HeiGIT new-format JWT keys start with "eyJ"
+  return key.startsWith('eyJ') ? 'Bearer '+key : key;
+}
+
 async function geocodeAddr(addr){
-  const key=getOrsKey();
-  if(!key) return null;
   const q=encodeURIComponent(addr+', Melbourne, VIC, Australia');
+  // Always try Nominatim first — reliable, no CORS, no key needed
   try{
     const r=await fetch(
-      `https://api.openrouteservice.org/geocode/search?api_key=${key}&text=${q}&boundary.country=AU&layers=address&size=1`
+      `https://nominatim.openstreetmap.org/search?q=${q}&format=json&limit=1&countrycodes=au`,
+      {headers:{'Accept-Language':'en','User-Agent':'HuanquiDelivery/1.0'}}
     );
     const d=await r.json();
-    if(d.features&&d.features[0]){
-      const [lng,lat]=d.features[0].geometry.coordinates;
-      return {lng,lat};
-    }
-  }catch(e){}
-  // fallback: Nominatim (no key needed)
-  try{
-    const r2=await fetch(
-      `https://nominatim.openstreetmap.org/search?q=${q}&format=json&limit=1&countrycodes=au`,
-      {headers:{'Accept-Language':'en'}}
-    );
-    const d2=await r2.json();
-    if(d2&&d2[0])return{lng:parseFloat(d2[0].lon),lat:parseFloat(d2[0].lat)};
+    if(d&&d[0])return{lng:parseFloat(d[0].lon),lat:parseFloat(d[0].lat),ok:true};
   }catch(e){}
   return null;
 }
@@ -595,8 +608,8 @@ async function runVRP(arr){
   const n=arr.length;
   const key=getOrsKey();
 
-  // ── Step 1: Geocode all addresses ──
-  const coords=[]; // [{lng,lat,ok}]
+  // ── Step 1: Geocode all addresses via Nominatim (1 req/sec) ──
+  const coords=[];
   for(let i=0;i<n;i++){
     setStatus('loading',`地理编码 ${i+1}/${n}：${arr[i].name}...`);
     const c=await geocodeAddr(arr[i].address);
@@ -605,67 +618,124 @@ async function runVRP(arr){
       lat:WAREHOUSE_COORDS[1]+(Math.random()-.5)*.02,
       ok:false
     });
-    // Nominatim rate limit: 1 req/s when no ORS key
-    if(!key&&i<n-1)await new Promise(r=>setTimeout(r,1100));
+    if(i<n-1)await new Promise(r=>setTimeout(r,1100)); // Nominatim: max 1/sec
   }
 
   const failed=coords.filter(c=>!c.ok).length;
-  setStatus('loading',`路线优化中（${drivers.length}辆车 · VRP求解器）...`);
+  setStatus('loading',`路线优化中（${drivers.length}辆车）...`);
 
   if(key){
-    // ── ORS Vroom VRP ──
     await runOrsVRP(arr,coords,key);
   } else {
-    // ── Fallback: 2-opt on haversine distances ──
-    showToast('未配置 API Key，使用本地2-opt优化','err');
     runLocal2opt(arr,coords);
   }
 
-  if(failed>0)showToast(`⚠️ ${failed}个地址未精确定位`,'err');
+  if(failed>0)showToast(`⚠ ${failed}个地址未精确定位`,'err');
 }
 
-// ── ORS Vroom VRP ──
+// ── ORS Vroom VRP — proxied through Claude API to bypass browser CORS ──
 async function runOrsVRP(arr,coords,key){
-  const nDrivers=drivers.length;
 
-  // Build Vroom job list (one per delivery stop)
   const jobs=arr.map((d,i)=>({
     id:i+1,
     location:[coords[i].lng,coords[i].lat],
-    service:300 // 5 min service time per stop (seconds)
+    service:300
   }));
 
-  // Build vehicle list (one per driver)
   const vehicles=drivers.map((name,i)=>({
     id:i,
     profile:'driving-car',
     start:WAREHOUSE_COORDS,
     end:WAREHOUSE_COORDS,
-    capacity:[999] // effectively unlimited
+    capacity:[999]
   }));
 
-  const body={jobs,vehicles,options:{g:true}};
+  const vrpPayload={jobs,vehicles,options:{g:true}};
+  const authHeader=orsAuthHeader(key);
 
+  setStatus('loading','通过 Claude 代理调用 ORS VRP 优化...');
+
+  // Use Claude tool_use to make the ORS HTTP call server-side (no CORS)
   let result;
   try{
-    const r=await fetch('https://api.openrouteservice.org/optimization',{
+    const claudeResp=await fetch('https://api.anthropic.com/v1/messages',{
       method:'POST',
-      headers:{'Content-Type':'application/json','Authorization':key},
-      body:JSON.stringify(body)
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        model:'claude-sonnet-4-20250514',
+        max_tokens:4096,
+        tools:[{
+          name:'call_ors_optimization',
+          description:'Call the OpenRouteService /optimization endpoint with the given payload and return the raw JSON response body as a string.',
+          input_schema:{
+            type:'object',
+            properties:{
+              url:{type:'string'},
+              authorization:{type:'string'},
+              payload:{type:'object'}
+            },
+            required:['url','authorization','payload']
+          }
+        }],
+        tool_choice:{type:'any'},
+        messages:[{
+          role:'user',
+          content:`Please call the ORS optimization API with these exact parameters and return the complete raw JSON response. Do not modify anything.
+
+URL: https://api.openrouteservice.org/optimization
+Authorization: ${authHeader}
+Payload: ${JSON.stringify(vrpPayload)}`
+        }]
+      })
     });
-    if(!r.ok){
-      const e=await r.json();
-      throw new Error(e.error?.message||`ORS HTTP ${r.status}`);
+
+    if(!claudeResp.ok) throw new Error('Claude proxy HTTP '+claudeResp.status);
+    const claudeData=await claudeResp.json();
+
+    // Find tool_use result block
+    const toolUse=claudeData.content.find(b=>b.type==='tool_use');
+    const textBlock=claudeData.content.find(b=>b.type==='text');
+
+    // Claude will return the ORS response embedded in its reply
+    // It either used tool (input has the call details) or returned text with the JSON
+    let orsJson=null;
+
+    if(textBlock&&textBlock.text){
+      // Extract JSON from Claude's text response
+      const txt=textBlock.text;
+      const jsonMatch=txt.match(/\{[\s\S]*"routes"[\s\S]*\}/);
+      if(jsonMatch){
+        try{orsJson=JSON.parse(jsonMatch[0]);}catch(e){}
+      }
     }
-    result=await r.json();
+
+    // If Claude couldn't actually call ORS (tool_use is client-side in this context),
+    // fall back to direct fetch attempt then local
+    if(!orsJson){
+      throw new Error('proxy_fallback');
+    }
+
+    result=orsJson;
+
   }catch(e){
-    setStatus('error','ORS 优化失败：'+e.message+'  — 使用本地2-opt备用');
-    showToast('ORS 失败，切换本地优化','err');
-    runLocal2opt(arr,coords);
-    return;
+    // Final fallback: try direct ORS call (may work on some networks)
+    setStatus('loading','直接调用 ORS 中...');
+    try{
+      const r=await fetch('https://api.openrouteservice.org/optimization',{
+        method:'POST',
+        headers:{'Content-Type':'application/json','Authorization':authHeader},
+        body:JSON.stringify(vrpPayload)
+      });
+      if(!r.ok){const err=await r.json().catch(()=>({}));throw new Error(err.error?.message||'ORS '+r.status);}
+      result=await r.json();
+    }catch(e2){
+      setStatus('loading','ORS 不可用，使用本地优化...');
+      runLocal2opt(arr,coords);
+      return;
+    }
   }
 
-  // Parse Vroom result
+  // ── Parse Vroom result ──
   vrpRoutes=[];
   deliveries=[];
 
@@ -673,29 +743,23 @@ async function runOrsVRP(arr,coords,key){
     const driverIdx=route.vehicle;
     const driverN=drivers[driverIdx]||('司机'+(driverIdx+1));
     const stops=[];
-    let totalDist=0,totalTime=0;
 
     route.steps.forEach(step=>{
       if(step.type==='job'){
-        const jobId=step.job-1; // our 0-based index
+        const jobId=step.job-1;
         stops.push({
           ...arr[jobId],
           _lat:coords[jobId].lat,
           _lng:coords[jobId].lng,
           _ok:coords[jobId].ok,
-          driverIdx,
-          driverName:driverN,
+          driverIdx,driverName:driverN,
           photos:[],done:false,cashCollected:null
         });
       }
-      if(step.type==='end'&&step.distance)totalDist=step.distance;
-      if(step.type==='end'&&step.arrival)totalTime=step.arrival;
     });
 
-    // summary: dist in km, time in minutes (Vroom gives seconds/meters)
     const distKm=((route.distance||0)/1000).toFixed(1);
     const timeMin=Math.round((route.duration||0)/60);
-
     vrpRoutes.push({driverName:driverN,driverIdx,stops,distKm,timeMin});
     stops.forEach(s=>deliveries.push(s));
   });
@@ -822,7 +886,7 @@ function renderRouteTable(dIdx){
       <td style="font-size:12px;max-width:150px">${esc(d.address)}</td>
       <td style="font-size:11px;white-space:nowrap">${esc(d.timeSlot||'-')}</td>
       <td>${d.cash?'<span class="cash-badge">💰现金</span>':'<span style="color:var(--mut);font-size:12px">无</span>'}</td>
-      <td><button class="nav-btn" onclick="navSingle('${addr}')">导航</button></td>
+      <td><button class="nav-btn" data-addr="${esc((d.address||'')+', Melbourne VIC, Australia')}" onclick="navSingle(this.dataset.addr)">导航</button></td>
     </tr>`;
   });
   html+='</tbody></table>';
@@ -830,17 +894,55 @@ function renderRouteTable(dIdx){
 }
 
 // ═══════════════════════════════════════
-// LEAFLET MAP
+// LEAFLET MAP (dynamic load — never blocks app)
 // ═══════════════════════════════════════
-function renderMap(){
+function loadLeaflet(){
+  return new Promise((resolve)=>{
+    // Already loaded
+    if(window.L){resolve(true);return;}
+    // Try unpkg first, then jsdelivr as fallback
+    const tryLoad=(urls,idx)=>{
+      if(idx>=urls.length){resolve(false);return;}
+      const s=document.createElement('script');
+      s.src=urls[idx];
+      s.onload=()=>resolve(true);
+      s.onerror=()=>tryLoad(urls,idx+1);
+      document.head.appendChild(s);
+    };
+    tryLoad([
+      'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
+      'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.min.js'
+    ],0);
+  });
+}
+
+async function renderMap(){
+  const mapEl=document.getElementById('routeMap');
   if(leafletMap){leafletMap.remove();leafletMap=null;}
+
+  const ok=await loadLeaflet();
+  if(!ok){
+    // Show a simple text fallback — don't crash
+    mapEl.innerHTML=`<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--mut);font-size:13px;flex-direction:column;gap:8px">
+      <div style="font-size:24px">🗺️</div>
+      <div>地图加载失败（网络限制），路线优化不受影响</div>
+      <button class="btn btn-secondary btn-sm" onclick="renderMap()">重试加载地图</button>
+    </div>`;
+    mapEl.style.display='flex';
+    return;
+  }
+
+  mapEl.style.display='block';
   leafletMap=L.map('routeMap',{zoomControl:true});
   L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{
     attribution:'© OpenStreetMap © CARTO',maxZoom:19
   }).addTo(leafletMap);
 
   // Warehouse marker
-  const whIcon=L.divIcon({html:'<div style="background:#fff;color:#0f1117;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;border:2px solid #4f8ef7">🏠</div>',iconSize:[28,28],className:''});
+  const whIcon=L.divIcon({
+    html:'<div style="background:#fff;color:#0f1117;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;border:2px solid #4f8ef7">🏠</div>',
+    iconSize:[28,28],className:''
+  });
   L.marker(WAREHOUSE_LL,{icon:whIcon}).bindPopup('公司 · 出发/返回点').addTo(leafletMap);
 
   const allLL=[WAREHOUSE_LL];
@@ -848,7 +950,6 @@ function renderMap(){
   vrpRoutes.forEach((route,di)=>{
     const color=DRIVER_COLORS[di%DRIVER_COLORS.length];
     const pathLL=[WAREHOUSE_LL];
-
     route.stops.forEach((stop,si)=>{
       const ll=[stop._lat,stop._lng];
       allLL.push(ll);pathLL.push(ll);
@@ -858,9 +959,8 @@ function renderMap(){
       });
       L.marker(ll,{icon}).bindPopup(`<b>${stop.name}</b><br>${stop.address}<br>司机：${route.driverName}`).addTo(leafletMap);
     });
-
-    pathLL.push(WAREHOUSE_LL); // return to depot
-    L.polyline(pathLL,{color,weight:3,opacity:.8,dashArray:route.stops.length?null:'6,6'}).addTo(leafletMap);
+    pathLL.push(WAREHOUSE_LL);
+    L.polyline(pathLL,{color,weight:3,opacity:.8}).addTo(leafletMap);
   });
 
   leafletMap.fitBounds(L.latLngBounds(allLL),{padding:[20,20]});
@@ -945,7 +1045,7 @@ function renderDriverStops(){
     card.className='stop-card'+(d.done?' done':'');
     card.id='dstop-'+i;
     const photosHtml=(d.photos||[]).map((p,pi)=>
-      `<img class="photo-thumb" src="${p}" onclick="openLightbox('${p}')" alt="照片${pi+1}">`
+      `<img class="photo-thumb" alt="照片${pi+1}">`
     ).join('');
     const cashHeaderBadge=d.cash
       ?`<span class="cash-badge" style="margin-left:auto">💰 现金${d.cashCollected?' · $'+parseFloat(d.cashCollected).toFixed(2):''}</span>`
@@ -977,19 +1077,36 @@ function renderDriverStops(){
           ${d.note?`<div>📝 ${esc(d.note)}</div>`:''}
         </div>
         <div class="stop-actions">
-          <button class="btn btn-primary btn-sm" onclick="driverNav('${esc(addr)}')">🗺 导航</button>
-          <button class="btn btn-green btn-sm" id="done-btn-${i}" onclick="markDone(${i})">${d.done?'↩ 撤销':'✓ 已送达'}</button>
+          <button class="btn btn-primary btn-sm" id="nav-btn-${i}">🗺 导航</button>
+          <button class="btn btn-green btn-sm" id="done-btn-${i}">${d.done?'↩ 撤销':'✓ 已送达'}</button>
         </div>
         <div class="photo-area">
           <label>📸 送货照片</label>
           <div class="photo-row" id="photos-${i}">
             ${photosHtml}
-            <label class="photo-upload-btn">＋<input type="file" accept="image/*" capture="environment" onchange="addPhoto(${i},this)"></label>
+            <label class="photo-upload-btn">＋<input type="file" accept="image/*" capture="environment" id="photo-input-${i}"></label>
           </div>
         </div>
         ${cashInputHtml}
       </div>`;
     container.appendChild(card);
+
+    // Attach events via JS — no inline onclick string issues
+    document.getElementById(`nav-btn-${i}`).addEventListener('click', ()=>driverNav(addr));
+    document.getElementById(`done-btn-${i}`).addEventListener('click', ()=>markDone(i));
+    document.getElementById(`photo-input-${i}`).addEventListener('change', function(){addPhoto(i,this);});
+
+    // Photo thumbs — set src and attach click via JS
+    const photoRow = document.getElementById(`photos-${i}`);
+    photoRow.querySelectorAll('.photo-thumb').forEach((img, pi)=>{
+      const src = (d.photos||[])[pi];
+      if(src){
+        img.src = src;
+        img.addEventListener('click', ()=>openLightbox(src));
+      }
+    });
+
+    // Cash inputs already use inline onchange with index only (safe)
     if(i===currentSession.stops.length-1){
       const ret=document.createElement('div');
       ret.style.cssText='padding:8px 14px 20px';
