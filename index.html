@@ -162,19 +162,7 @@ tr:hover td{background:rgba(255,255,255,.02);}
     <span style="font-size:12px;color:var(--mut)">&#x1F4C5;</span>
     <input type="date" id="deliveryDate" style="max-width:165px;flex:none">
   </div>
-  <div class="card" style="margin:8px 12px 0;flex-shrink:0;display:none" id="driversCard">
-    <div class="card-header" style="padding:8px 14px">
-      <span class="seq-num color-0" style="color:#fff">&#x1F465;</span>
-      <span style="font-weight:700">司机列表</span>
-      <span style="font-size:12px;color:var(--mut);margin-left:6px">（多司机自动分配路线）</span>
-    </div>
-    <div class="drivers-row" id="driverTagsRow" style="padding:8px 14px 4px"></div>
-    <div style="padding:6px 14px 10px;display:flex;gap:8px;align-items:center">
-      <input class="add-driver-input" type="text" id="newDriverInput" placeholder="添加司机姓名"
-        maxlength="20" onkeydown="if(event.key==='Enter')addDriver()">
-      <button class="btn btn-secondary btn-sm" onclick="addDriver()">＋ 添加</button>
-    </div>
-  </div>
+<!-- Multi-driver removed: single driver only -->
   <div class="card" style="margin:8px 12px 8px;flex-shrink:0">
     <div class="card-header" style="padding:8px 14px">
       <span class="seq-num color-0" style="color:#fff">1</span>
@@ -425,8 +413,7 @@ function confirmDriver(){
   document.getElementById('driverChip').style.display='flex';
   document.getElementById('driverChipName').textContent=v;
   document.getElementById('dateDriverRow').style.display='flex';
-  document.getElementById('driversCard').style.display='block';
-  if(!drivers.includes(v)){drivers=[v];renderDriverTags();}
+  if(!drivers.includes(v)){drivers=[v];}
   setStatus('idle','请粘贴客户信息或手动录入，然后点击解析...');
   showToast('欢迎，'+v+'！','ok');
 }
@@ -593,7 +580,7 @@ function parseCustomerText(raw){
     }
 
     // Clean up address: remove trailing commas, spaces, dots
-    entry.address = entry.address.replace(/[,，\s.]+$/, '').trim();
+    entry.address = entry.address.replace(/[（(][^）)]*[）)]/g,'').replace(/[,，\s.]+$/,'').replace(/[^ -,.\/\-\s]/g,'').replace(/\s+/g,' ').trim();
 
     if (!entry.name || !entry.address) continue;
     if (!entry.packages) entry.packages = 1;
@@ -631,30 +618,12 @@ function optimizeRoute(nodes){
   return{route,distKm:rd(route)};
 }
 function assignMultiDriver(stops){
-  if(drivers.length<=1||stops.length<=1){
-    const nodes=stops.map((s,i)=>({...s,idx:i,lat:s._lat,lng:s._lng}));
-    const{route,distKm}=optimizeRoute(nodes);
-    const timeMin=Math.round(distKm*1.8);
-    return[{driverName:drivers[0],driverIdx:0,
-      stops:route.map(n=>({...stops[n.idx],_lat:n.lat,_lng:n.lng,driverIdx:0,driverName:drivers[0],photos:[],done:false,cashCollected:null})),
-      distKm:distKm.toFixed(1),timeMin}];
-  }
-  const wh={lat:WAREHOUSE_LAT,lng:WAREHOUSE_LNG};
-  const scored=stops.map((s,i)=>({...s,idx:i,dist:hav(wh,{lat:s._lat,lng:s._lng})}));
-  scored.sort((a,b)=>a.dist-b.dist);
-  const groups=drivers.map(()=>[]);
-  scored.forEach((s,i)=>{groups[i%drivers.length].push(s);});
-  const results=[];
-  for(let d=0;d<drivers.length;d++){
-    if(groups[d].length===0)continue;
-    const nodes=groups[d].map(s=>({...s,lat:s._lat,lng:s._lng}));
-    const{route,distKm}=optimizeRoute(nodes);
-    const timeMin=Math.round(distKm*1.8);
-    results.push({driverName:drivers[d],driverIdx:d,
-      stops:route.map(n=>({...stops[n.idx],_lat:n.lat,_lng:n.lng,driverIdx:d,driverName:drivers[d],photos:[],done:false,cashCollected:null})),
-      distKm:distKm.toFixed(1),timeMin});
-  }
-  return results;
+  const nodes=stops.map((s,i)=>({...s,idx:i,lat:s._lat,lng:s._lng}));
+  const{route,distKm}=optimizeRoute(nodes);
+  const timeMin=Math.round(distKm*1.8);
+  return[{driverName:drivers[0],driverIdx:0,
+    stops:route.map(n=>({...stops[n.idx],_lat:n.lat,_lng:n.lng,driverIdx:0,driverName:drivers[0],photos:[],done:false,cashCollected:null})),
+    distKm:distKm.toFixed(1),timeMin}];
 }
 
 async function doParseText(){
@@ -728,26 +697,55 @@ function renderRouteResult(){
   document.getElementById('statKm').textContent=km.toFixed(1);
   document.getElementById('statMin').textContent=min;
   const tabs=document.getElementById('driverRouteTabs');
-  tabs.innerHTML=vrpRoutes.map((r,i)=>
+  let tabHtml='<button class="drt'+(activeRouteTab===-1?' active':'')+'" onclick="switchRouteTab(-1)">🗺 线路总览</button>';
+  tabHtml+=vrpRoutes.map((r,i)=>
     '<button class="drt'+(i===activeRouteTab?' active':'')+'" onclick="switchRouteTab('+i+')">&#x1F69A; '+esc(r.driverName)+' &middot; '+r.stops.length+'单 &middot; '+r.distKm+'km</button>'
   ).join('');
+  tabs.innerHTML=tabHtml;
   renderRouteTable(activeRouteTab);
   setStatus('success','✅ '+allStops.length+'单优化完成 &middot; '+km.toFixed(1)+'km &middot; 约'+min+'分钟');
 }
 function switchRouteTab(idx){activeRouteTab=idx;
-  document.querySelectorAll('.drt').forEach((b,i)=>b.classList.toggle('active',i===idx));
+  document.querySelectorAll('.drt').forEach((b,i)=>{
+    const drtIdx=parseInt(b.getAttribute('onclick')?.match(/-?\d+/)?.[0]);
+    b.classList.toggle('active',drtIdx===idx);
+  });
   renderRouteTable(idx);
 }
 function renderRouteTable(dIdx){
+  // dIdx === -1 means "all drivers overview" — show merged table with driver column
+  if(dIdx===-1){
+    let html='<table><thead><tr><th>顺序</th><th>司机</th><th>客户</th><th>件</th><th>地址</th><th>电话</th><th>时间</th><th>现金</th><th>导航</th></tr></thead><tbody>';
+    let seq=0;
+    vrpRoutes.forEach((route,ri)=>{
+      const color=DRIVER_COLORS[ri%6];
+      route.stops.forEach((d,i)=>{
+        seq++;
+        html+='<tr><td><span class="seq-num" style="background:'+color+';color:'+(ri<3?'#fff':'#0f1117')+'">'+seq+'</span></td>'+
+        '<td style="font-weight:600;color:'+color+'">&#x1F69A; '+esc(route.driverName)+'</td>'+
+        '<td><b>'+esc(d.name)+'</b>'+(d.note?'<br><span style="font-size:11px;color:var(--mut)">'+esc(d.note)+'</span>':'')+'</td>'+
+        '<td style="text-align:center">'+d.packages+'</td>'+
+        '<td style="font-size:12px;max-width:200px;word-break:break-word">'+esc(d.address)+'</td>'+
+        '<td style="font-size:11px;white-space:nowrap">'+esc(d.phone||'-')+'</td>'+
+        '<td style="font-size:11px;white-space:nowrap">'+esc(d.timeSlot||'-')+'</td>'+
+        '<td>'+(d.cash?'<span class="cash-badge">💰现金</span>':'<span style="color:var(--mut);font-size:12px">-</span>')+'</td>'+
+        '<td><button class="nav-btn" data-addr="'+esc(d.address||'')+'" onclick="navSingle(this.dataset.addr)">导航</button></td></tr>';
+      });
+    });
+    html+='</tbody></table>';
+    document.getElementById('tableWrap').innerHTML=html;
+    return;
+  }
   const route=vrpRoutes[dIdx];
   if(!route){document.getElementById('tableWrap').innerHTML='';return;}
   const color=DRIVER_COLORS[dIdx%6];
-  let html='<table><thead><tr><th>#</th><th>客户</th><th>件</th><th>地址</th><th>时间</th><th>现金</th><th>导航</th></tr></thead><tbody>';
+  let html='<table><thead><tr><th>#</th><th>客户</th><th>件</th><th>地址</th><th>电话</th><th>时间</th><th>现金</th><th>导航</th></tr></thead><tbody>';
   route.stops.forEach((d,i)=>{
     html+='<tr><td><span class="seq-num" style="background:'+color+';color:'+(dIdx<3?'#fff':'#0f1117')+'">'+(i+1)+'</span></td>'+
     '<td><b>'+esc(d.name)+'</b>'+(d.note?'<br><span style="font-size:11px;color:var(--mut)">'+esc(d.note)+'</span>':'')+'</td>'+
     '<td style="text-align:center">'+d.packages+'</td>'+
-    '<td style="font-size:12px;max-width:150px">'+esc(d.address)+'</td>'+
+    '<td style="font-size:12px;max-width:200px;word-break:break-word">'+esc(d.address)+'</td>'+
+    '<td style="font-size:11px;white-space:nowrap">'+esc(d.phone||'-')+'</td>'+
     '<td style="font-size:11px;white-space:nowrap">'+esc(d.timeSlot||'-')+'</td>'+
     '<td>'+(d.cash?'<span class="cash-badge">💰现金</span>':'<span style="color:var(--mut);font-size:12px">-</span>')+'</td>'+
     '<td><button class="nav-btn" data-addr="'+esc(d.address||'')+'" onclick="navSingle(this.dataset.addr)">导航</button></td></tr>';
@@ -755,13 +753,22 @@ function renderRouteTable(dIdx){
   html+='</tbody></table>';
   document.getElementById('tableWrap').innerHTML=html;
 }
-function navSingle(addr){window.open('https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(addr+', Melbourne VIC, Australia'),'_blank');}
+function navSingle(addr){window.open('https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent((addr||'')+', Melbourne VIC, Australia'),'_blank');}
 function openAllMaps(){
-  const route=vrpRoutes[activeRouteTab];
+  // If overview tab, open all drivers' routes
+  let route;
+  if(activeRouteTab===-1){
+    // Merge all stops for Google Maps
+    const allStops=vrpRoutes.reduce((acc,r)=>acc.concat(r.stops.map(s=>({...s,address:s.address||''}))),[]);
+    if(!allStops.length)return;
+    route={stops:allStops};
+  } else {
+    route=vrpRoutes[activeRouteTab];
+  }
   if(!route||!route.stops.length)return;
   const wh=encodeURIComponent(WAREHOUSE_ADDR);
-  const wps=route.stops.slice(0,-1).map(d=>encodeURIComponent(d.address+', Melbourne VIC, Australia')).join('|');
-  const dest=encodeURIComponent(route.stops[route.stops.length-1].address+', Melbourne VIC, Australia');
+  const wps=route.stops.slice(0,-1).map(d=>encodeURIComponent((d.address||'')+', Melbourne VIC, Australia')).join('|');
+  const dest=encodeURIComponent((route.stops[route.stops.length-1].address||'')+', Melbourne VIC, Australia');
   let url='https://www.google.com/maps/dir/?api=1&origin='+wh+'&destination='+dest;
   if(wps)url+='&waypoints='+wps;
   window.open(url,'_blank');
