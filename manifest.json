@@ -1,0 +1,13 @@
+{
+  "name": "环球伙拼送货排班",
+  "short_name": "环球伙拼",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#0c0c0c",
+  "theme_color": "#0c0c0c",
+  "orientation": "any",
+  "icons": [
+    {"src": "icon-192.png", "sizes": "192x192", "type": "image/png"},
+    {"src": "icon-512.png", "sizes": "512x512", "type": "image/png"}
+  ]
+}
