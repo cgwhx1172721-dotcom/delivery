@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>环球伙拼 送货排班</title>
-<meta name="version" content="20260513063539">
+<meta name="version" content="20260513065739">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;600;700;800&display=swap');
 :root{--bg:#0c0c0c;--s1:#161616;--s2:#1e1e1e;--s3:#252525;--bd:#2a2a2a;--acc:#f5c518;--txt:#ede9e0;--mut:#5a5a5a;--grn:#3ecf6e;--red:#e05252;--blu:#3b82f6;}
@@ -131,10 +131,32 @@ tfoot tr td{border-top:2px solid var(--bd);font-weight:700;color:var(--acc);font
 <div id="wxBanner" style="display:none;position:fixed;top:0;left:0;right:0;z-index:99999;background:#ff6b35;color:#fff;padding:12px 16px;font-size:13px;font-weight:700;text-align:center;line-height:1.5">
   ⚠️ 请点右上角「···」→「在浏览器中打开」，否则导航无法使用
 </div>
+<!-- PWA install banner for Android Chrome -->
+<div id="installBanner" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:99998;background:#1a1a1a;border-top:1px solid #f5c518;padding:12px 16px;align-items:center;justify-content:space-between;gap:12px">
+  <div style="color:#ede9e0;font-size:13px;font-weight:700">📱 添加到主屏幕，随时快速打开</div>
+  <button onclick="installPWA()" style="background:#f5c518;color:#000;border:none;border-radius:6px;padding:8px 16px;font-weight:700;font-size:13px;cursor:pointer;white-space:nowrap">添加</button>
+</div>
 <script>
 if(/MicroMessenger/i.test(navigator.userAgent)){
   document.getElementById('wxBanner').style.display='block';
   document.body.style.paddingTop='50px';
+}
+// PWA install prompt for Android Chrome
+let deferredPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredPrompt = e;
+  document.getElementById('installBanner').style.display = 'flex';
+});
+window.addEventListener('appinstalled', () => {
+  document.getElementById('installBanner').style.display = 'none';
+});
+function installPWA() {
+  if (deferredPrompt) {
+    deferredPrompt.prompt();
+    deferredPrompt.userChoice.then(() => { deferredPrompt = null; });
+    document.getElementById('installBanner').style.display = 'none';
+  }
 }
 </script>
 
@@ -494,408 +516,76 @@ async function parseAndSort() {
 }
 
 function splitBlocks(raw) {
+  // Try blank-line separation first
   let blocks = raw.split(/\n{2,}/).map(b=>b.trim()).filter(Boolean);
-  if (blocks.length === 1) blocks = raw.split('\n').map(b=>b.trim()).filter(Boolean);
+  // If only 1 block, try splitting on newlines (one customer per line)
+  if (blocks.length === 1) {
+    blocks = raw.split('\n').map(b=>b.trim()).filter(Boolean);
+  }
+  // If lines start with a name: pattern, treat each as a block
+  // (handles multi-line entries within same paragraph by detecting "姓名:" prefix)
   return blocks;
 }
 
 function parseBlock(block) {
+  if (!block.trim()) return null;
   const lines = block.split('\n').map(l=>l.trim()).filter(Boolean);
-  if (!lines.length) return null;
 
-  let name = lines[0]
-    .replace(/^(客户|姓名|name)[：:：\s]*/i,'')
-    .replace(/[：:]\s*\d+.*$/,'')
-    .replace(/,\s*\d+.*/,'')
-    .replace(/\s+\d+\s*[件箱包个].*/,'')
-    .replace(/^[👉📍📞⏰📦]\s*/,'')
-    .trim();
+  // Inline format: "姓名:包裹 N 件,...,地址:XXX,电话:XXX,备注:XXX"
+  const pkgInline  = block.match(/包裹\s*(\d+)\s*件/);
+  const addrInline = block.match(/地址[:\uff1a]\s*([^,\uff0c\n]*)/);
+  const telInline  = block.match(/电话[:\uff1a]\s*([^,\uff0c\n]+)/);
+  const noteInline = block.match(/备注[:\uff1a]\s*([^\n]+)/);
+  const cashInline = /收现金/.test(block);
+
+  // Name: everything before the first colon
+  const nameMatch = block.match(/^([^:\uff1a\n]+)[:\uff1a]/);
+  let name = nameMatch ? nameMatch[1].trim() : lines[0].trim();
   if (!name) name = '未知客户';
 
-  const pkgMatch = block.match(/(\d+)\s*[件箱包个pcs]/i);
+  // Packages
+  const pkgMatch = pkgInline || block.match(/(\d+)\s*[件箱包个pcs]/i);
   const packages = pkgMatch ? parseInt(pkgMatch[1]) : 1;
 
+  // Address — extract then strip ALL Chinese characters and junk
   let address = '';
-  const addrLine = lines.find(l=>/^(地址|address)[：:：]/i.test(l));
-  if (addrLine) {
-    address = addrLine.replace(/^(地址|address)[：:：\s]*/i,'').trim();
+  if (addrInline) {
+    address = addrInline[1].trim();
   } else {
-    const streetLine = lines.find(l=>/\d+\s+[a-z]/i.test(l)&&!/^\d+\s*[件箱包个]/.test(l)&&!/^[👉📝]/.test(l));
-    if (streetLine) address = streetLine.replace(/^(地址|address)[：:：\s]*/i,'').trim();
+    const addrLine = lines.find(l=>/^(地址|address)[\uff1a:\s]/i.test(l));
+    if (addrLine) address = addrLine.replace(/^(地址|address)[\uff1a:\s]*/i,'').trim();
+    else {
+      const sl = lines.find(l=>/\d+\s+[a-z]/i.test(l) && !/^\d+\s*[件箱包个]/.test(l));
+      if (sl) address = sl.trim();
+    }
   }
-  // Strip leading emoji/labels
-  address = address.replace(/^[👉📍]\s*/,'').trim();
-  // Strip trailing phone numbers (04xxxxxxxx, +61xxxxxxxxx, etc.)
-  address = address.replace(/[\s,，]+(\+?61\s*[24-9]\d{8}|0[24-9]\d{8}).*$/,'').trim();
-  // Strip trailing time expressions (下午3点, 3pm, 10am, 上午10, etc.)
-  address = address.replace(/[\s,，]+(上午|下午|早上|晚上)\s*\d.*$/,'').trim();
-  address = address.replace(/[\s,，]+\d{1,2}\s*(am|pm|点|时).*$/i,'').trim();
-  // Strip trailing 现金/cash/已付 keywords
-  address = address.replace(/[\s,，]+(现金|cash|已付|转账|eft).*$/i,'').trim();
-  // Strip trailing Chinese characters that leaked in (备注 / notes fragment)
-  address = address.replace(/[\s,，]+[\u4e00-\u9fff].{0,10}$/, '').trim();
+  // Remove "地址B:" style prefixes
+  address = address.replace(/^地址[A-Za-z]?[\uff1a:\s]*/,'').trim();
+  // ★ Strip ALL Chinese characters from address
+  address = address.replace(/[\u4e00-\u9fff\u3400-\u4dbf]+/g,' ').trim();
+  // Strip leading/trailing punctuation and spaces
+  address = address.replace(/^[,，.。\s]+|[,，.。\s]+$/g,'').trim();
+  // Collapse multiple spaces
+  address = address.replace(/\s{2,}/g,' ').trim();
 
-  const phoneMatch = block.match(/(\+?61\s*[24-9]\d{8}|0[24-9]\d{8}|\d{4}\s*\d{3}\s*\d{3})/);
-  const phone = phoneMatch ? phoneMatch[1].replace(/\s/g,'') : '';
-
-  let timeSlot='时间待定', timeOrder=50;
-  const tts = [
-    [/上午\s*(\d+)\s*[点时]/,  m=>[`上午${m[1]}点`,  parseInt(m[1])]],
-    [/早上\s*(\d+)\s*[点时]/,  m=>[`早上${m[1]}点`,  parseInt(m[1])]],
-    [/(\d{1,2})\s*am/i,        m=>[`${m[1]}AM`,       parseInt(m[1])]],
-    [/(\d{1,2}):(\d{2})\s*am/i,m=>[`${m[1]}:${m[2]}AM`,parseInt(m[1])]],
-    [/下午\s*(\d+)\s*[点时]/,  m=>[`下午${m[1]}点`,  parseInt(m[1])+12]],
-    [/晚上\s*(\d+)\s*[点时]/,  m=>[`晚上${m[1]}点`,  parseInt(m[1])+18]],
-    [/(\d{1,2})\s*pm/i,        m=>[`${m[1]}PM`,       parseInt(m[1])+12]],
-    [/(\d{1,2}):(\d{2})\s*pm/i,m=>[`${m[1]}:${m[2]}PM`,parseInt(m[1])+12]],
-    [/(\d{1,2})\s*[-—~]\s*(\d{1,2})\s*[点时]/,m=>[`${m[1]}-${m[2]}点`,parseInt(m[1])]],
-  ];
-  for (const [re,fn] of tts) {
-    const m=block.match(re);
-    if(m){[timeSlot,timeOrder]=fn(m);break;}
+  // Phone
+  let phone = '';
+  if (telInline) {
+    const raw = telInline[1].trim();
+    const m = raw.match(/(\+?61\s*[24-9]\d{8}|0[24-9]\d{8}|\d{9,10})/);
+    phone = m ? m[1] : raw;
+  } else {
+    const pm = block.match(/(\+?61\s*[24-9]\d{8}|0[24-9]\d{8})/);
+    phone = pm ? pm[1].replace(/\s/g,'') : '';
   }
 
-  const cash=/现金|cash/i.test(block);
-  const noteLine=lines.find(l=>/^[👉📝]/.test(l)||/^(备注|note)[：:：]/i.test(l));
-  const note=noteLine?noteLine.replace(/^[👉📝]\s*/,'').replace(/^(备注|note)[：:：\s]*/i,'').trim():'';
+  // Cash
+  const cash = cashInline || /现金|cash/i.test(block);
 
-  return {name,packages,address,phone,timeSlot,timeOrder,cash,note};
+  // Note — keep as original text including time info
+  const note = noteInline ? noteInline[1].trim() :
+    (lines.find(l=>/^[👉📝]/.test(l))||'').replace(/^[👉📝]\s*/,'').trim();
+
+  return {name, packages, address, phone, timeSlot:'', timeOrder:0, cash, note};
 }
 
-// ══════════════════════════════════
-// TABLE
-// ══════════════════════════════════
-function renderTable() {
-  const tot=deliveries.reduce((s,d)=>s+d.packages,0);
-  const cc=deliveries.filter(d=>d.cash).length;
-  document.getElementById('statsPanel').style.display='';
-  document.getElementById('sTot').textContent=deliveries.length;
-  document.getElementById('sPkg').textContent=tot;
-  document.getElementById('sCash').textContent=cc;
-  document.getElementById('actionBar').style.display='';
-
-  let html=`<table><thead><tr>
-    <th></th><th>#</th><th>客户</th><th>件数</th><th>地址</th>
-    <th>电话</th><th>时间</th><th>付款</th><th>备注</th>
-  </tr></thead><tbody>`;
-
-  deliveries.forEach((d,i)=>{
-    const cash=d.cash?`<span class="pill pill-grn">💰 现金</span>`:`<span class="pill pill-mut">✓ 已付</span>`;
-    const tel=d.phone?`<a class="tel-link" href="tel:${d.phone}">📞 ${d.phone}</a>`:`<span style="color:var(--mut)">—</span>`;
-    html+=`<tr draggable="true" ondragstart="dragSrc=${i}" ondragover="event.preventDefault()" ondrop="doDrop(${i})"
-      onmouseenter="this.style.background='#f5c51806'" onmouseleave="this.style.background=''">
-      <td><span class="drag-handle">⠿</span></td>
-      <td><div class="num-circle">${i+1}</div></td>
-      <td style="font-weight:700;white-space:nowrap">${escHtml(d.name)}</td>
-      <td><span class="pill pill-dim">📦 ${d.packages}</span></td>
-      <td style="max-width:155px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:monospace;color:var(--mut)" title="${escHtml(d.address)}">${escHtml(d.address)||'—'}</td>
-      <td style="white-space:nowrap">${tel}</td>
-      <td><span class="pill pill-acc">${escHtml(d.timeSlot)}</span></td>
-      <td>${cash}</td>
-      <td><input class="note-in" value="${escAttr(d.note||'')}" placeholder="备注..." oninput="deliveries[${i}].note=this.value"></td>
-    </tr>`;
-  });
-
-  html+=`</tbody><tfoot><tr>
-    <td colspan="3" style="padding:10px">合计</td>
-    <td style="padding:10px;font-family:monospace">${tot} 件</td>
-    <td colspan="3"></td>
-    <td style="padding:10px;color:var(--grn)">现金 ${cc} 单</td>
-    <td></td>
-  </tr></tfoot></table>`;
-
-  document.getElementById('tblWrap').innerHTML=html;
-}
-
-function doDrop(i){
-  if(dragSrc===null||dragSrc===i)return;
-  const arr=[...deliveries];const[m]=arr.splice(dragSrc,1);arr.splice(i,0,m);
-  deliveries=arr;dragSrc=null;renderTable();
-}
-
-// ══════════════════════════════════
-// ACTIONS
-// ══════════════════════════════════
-
-// Strip everything except the actual street/suburb for Maps
-function cleanAddr(raw){
-  let a=(raw||'').trim();
-  a=a.replace(/[\s,，]+(\+?61\s*[24-9]\d{8}|0[24-9]\d{8}).*$/,'');
-  a=a.replace(/[\s,，]+(上午|下午|早上|晚上)\s*\d.*$/,'');
-  a=a.replace(/[\s,，]+\d{1,2}\s*(am|pm|点|时).*$/i,'');
-  a=a.replace(/[\s,，]+(现金|cash|已付|转账|eft).*$/i,'');
-  a=a.replace(/[\s,，]+[\u4e00-\u9fff].{0,15}$/,'');
-  a=a.replace(/^[👉📍]\s*/,'');
-  return a.trim()||'Melbourne';
-}
-
-// Navigation — works on all devices
-function mapsUrlSingle(addr){
-  const dest = cleanAddr(addr) + ', Melbourne VIC, Australia';
-  return 'https://maps.google.com/maps?daddr=' + encodeURIComponent(dest);
-}
-
-function openMapsUrl(url){
-  window.location.href = url;
-}
-
-function openMaps(){
-  if(!deliveries.length)return;
-  // Use /maps/dir/A/B/C/ format — works on all devices, respects explicit start address
-  const stops = deliveries.map(d=>encodeURIComponent(cleanAddr(d.address)+', Melbourne VIC, Australia'));
-  const wh = encodeURIComponent('1/41-43 Lexton Road, Box Hill North VIC 3129');
-  // Build: warehouse / stop1 / stop2 / ... / warehouse
-  const url = 'https://www.google.com/maps/dir/' + wh + '/' + stops.join('/') + '/' + wh;
-  window.open(url, '_blank');
-  toast('已打开 Google Maps 全程路线','ok');
-}
-
-function copySheet(){
-  const date=document.getElementById('delivDate').value;
-  const note=document.getElementById('driverNote').value;
-  let t=`📦 环球伙拼 送货单\n📅 日期：${date}\n`;
-  if(note)t+=`📝 备注：${note}\n`;
-  t+='─'.repeat(36)+'\n\n';
-  deliveries.forEach((d,i)=>{
-    t+=`【${i+1}】${d.name}\n  📍 ${d.address||'地址未填'}\n  📞 ${d.phone||'电话未填'}\n  ⏰ ${d.timeSlot}\n  📦 ${d.packages}件`;
-    if(d.cash)t+='  💰 收现金';
-    if(d.note)t+=`  📝 ${d.note}`;
-    t+='\n\n';
-  });
-  const tot=deliveries.reduce((s,d)=>s+d.packages,0);
-  t+='─'.repeat(36)+`\n合计：${deliveries.length}单 / ${tot}件 / 现金${deliveries.filter(d=>d.cash).length}单`;
-  navigator.clipboard.writeText(t).then(()=>toast('司机表格已复制','ok')).catch(()=>{
-    const ta=document.createElement('textarea');ta.value=t;document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);toast('已复制','ok');
-  });
-}
-
-function exportCSV(){
-  const date=document.getElementById('delivDate').value;
-  let csv='\uFEFF顺序,客户,件数,地址,电话,时间,付款,备注\n';
-  deliveries.forEach((d,i)=>{csv+=`${i+1},"${d.name}",${d.packages},"${d.address}","${d.phone}","${d.timeSlot}","${d.cash?'现金':'已付款'}","${d.note||''}"\n`;});
-  const a=document.createElement('a');
-  a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
-  a.download=`送货单_${document.getElementById('delivDate').value}.csv`;a.click();
-  toast('CSV 已下载','ok');
-}
-
-function clearAll(){
-  deliveries=[];photos={};currentStop=0;
-  document.getElementById('rawInput').value='';
-  document.getElementById('tblWrap').innerHTML='<div class="empty"><div class="empty-icon">📦</div>粘贴客户信息后<br>点击「解析 &amp; 自动排线」</div>';
-  document.getElementById('statsPanel').style.display='none';
-  document.getElementById('actionBar').style.display='none';
-  document.getElementById('driverModeBtn').style.display='none';
-  document.getElementById('shareBtn').style.display='none';
-  setStatus('idle','等待输入客户信息...');
-  location.hash='';
-}
-
-// ══════════════════════════════════
-// DRIVER MODE
-// ══════════════════════════════════
-function enterDriverMode(){
-  currentStop=0;
-  document.getElementById('managerView').style.display='none';
-  document.getElementById('driverView').style.display='block';
-  renderDriver();
-}
-function exitDriverMode(){
-  if(isDriverOnlyMode)return; // can't go back if opened from link
-  stopCam();
-  document.getElementById('driverView').style.display='none';
-  document.getElementById('managerView').style.display='block';
-}
-
-
-function navToWarehouse(){
-  const wh = '1/41-43 Lexton Road, Box Hill North VIC 3129';
-  const url = 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(wh) + '&travelmode=driving';
-  window.location.href = url;
-}
-
-function renderDriver(){
-  const done=Object.keys(photos).length,total=deliveries.length;
-  document.getElementById('driverProgress').textContent=`已完成 ${done} / ${total} 单`;
-  document.getElementById('progressFill').style.width=`${(done/total)*100}%`;
-
-  if(done===total){
-    document.getElementById('allDoneView').style.display='block';
-    document.getElementById('allDoneSub').textContent=`${total}单 · ${deliveries.reduce((s,d)=>s+d.packages,0)}件 全部完成`;
-    document.getElementById('stopList').innerHTML='';
-    document.getElementById('currentDetail').innerHTML='';
-    // Always show return button; navToWarehouse handles missing address
-    const rhBtn = document.getElementById('returnHomeBtn');
-    if(rhBtn) rhBtn.style.display = '';
-    return;
-  }
-  document.getElementById('allDoneView').style.display='none';
-
-  let lHtml='';
-  deliveries.forEach((d,i)=>{
-    const isDone=!!photos[i],isCur=i===currentStop;
-    const nc=isDone?'sn-d':isCur?'sn-c':'sn-p';
-    lHtml+=`<div class="stop-card ${isCur?'active':''} ${isDone?'done':''}" onclick="${isDone?'void 0':'setStop('+i+')'}">
-      <div class="stop-num ${nc}">${isDone?'✓':i+1}</div>
-      <div style="flex:1;min-width:0">
-        <div style="font-weight:700;font-size:14px">${escHtml(d.name)}</div>
-        <div style="font-size:11px;color:var(--mut);font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px">${escHtml(d.address||'地址未填')}</div>
-      </div>
-      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
-        ${d.cash?'<span class="pill pill-grn" style="font-size:10px">💰</span>':''}
-        <span style="font-size:11px;color:var(--mut);font-family:monospace">📦${d.packages}</span>
-      </div>
-    </div>`;
-  });
-  document.getElementById('stopList').innerHTML=lHtml;
-
-  const d=deliveries[currentStop];
-  if(!d||photos[currentStop]){
-    document.getElementById('currentDetail').innerHTML=currentStop<deliveries.length-1
-      ?`<button class="btn btn-grn" style="width:100%;justify-content:center;font-size:15px;padding:14px" onclick="setStop(${currentStop+1})">下一单 →</button>`:'';
-    return;
-  }
-
-  const telBtn=d.phone?`<a class="btn btn-blu" style="flex:1;justify-content:center;text-decoration:none" href="tel:${d.phone}">📞 ${d.phone}</a>`:'';
-  const noteHtml=d.note?`<div style="font-size:12px;color:var(--mut);background:var(--s2);border-radius:8px;padding:8px 12px;margin-bottom:14px;font-family:monospace">📝 ${escHtml(d.note)}</div>`:'';
-
-  const navHref = 'https://maps.google.com/maps?daddr=' + encodeURIComponent(cleanAddr(d.address) + ', Melbourne VIC, Australia');
-  document.getElementById('currentDetail').innerHTML=`
-    <div class="detail-card">
-      <div class="detail-label">当前 #${currentStop+1}</div>
-      <div class="detail-name">${escHtml(d.name)}</div>
-      <div class="detail-addr">📍 ${escHtml(d.address||'地址未填')}</div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
-        <span class="pill pill-acc">⏰ ${escHtml(d.timeSlot)}</span>
-        <span class="pill pill-dim">📦 ${d.packages} 件</span>
-        ${d.cash?'<span class="pill pill-grn">💰 收现金</span>':''}
-      </div>
-      ${noteHtml}
-      <div class="detail-btns">${telBtn}
-        <a class="btn btn-ghost" style="flex:1;justify-content:center;text-decoration:none"
-          href="${navHref}" target="_blank" rel="noopener">🗺 导航</a>
-      </div>
-      <hr style="border:none;border-top:1px solid var(--bd);margin:14px 0">
-      <button class="btn btn-acc" style="width:100%;justify-content:center;font-size:15px;padding:14px"
-        onclick="openPhotoModal(${currentStop})">📸 拍照 · 完成此单</button>
-    </div>`;
-
-  // Add return-to-warehouse button for last stop
-  if(currentStop===deliveries.length-1){
-    const returnBtn = document.createElement('a');
-    returnBtn.href = 'https://www.google.com/maps/dir/?api=1&destination=1%2F41-43%20Lexton%20Road%2C%20Box%20Hill%20North%20VIC%203129&travelmode=driving';
-    returnBtn.target = '_blank';
-    returnBtn.rel = 'noopener';
-    returnBtn.className = 'btn btn-grn';
-    returnBtn.style.cssText = 'width:100%;justify-content:center;text-decoration:none;margin-top:12px;display:flex';
-    returnBtn.textContent = '🏠 最后一单 · 导航回仓库';
-    document.getElementById('currentDetail').appendChild(returnBtn);
-  }
-}
-
-function setStop(i){currentStop=i;renderDriver();}
-
-// ══════════════════════════════════
-// PHOTO MODAL
-// ══════════════════════════════════
-function openPhotoModal(idx){
-  modalIdx=idx;pendingPhoto=null;
-  const d=deliveries[idx];
-  document.getElementById('modalSub').textContent=`客户：${d.name} · ${d.packages} 件`;
-  document.getElementById('camVideo').style.display='none';
-  document.getElementById('photoPreview').style.display='none';
-  document.getElementById('camPh').style.display='flex';
-  document.getElementById('doneBadge').style.display='none';
-  document.getElementById('camErr').style.display='none';
-  setModalBtns('initial');
-  document.getElementById('photoModal').classList.add('open');
-}
-function closeModal(){stopCam();document.getElementById('photoModal').classList.remove('open');modalIdx=null;pendingPhoto=null;}
-
-function setModalBtns(state){
-  const c=document.getElementById('modalBtns');
-  if(state==='initial'){
-    c.innerHTML=`<button class="btn btn-acc" onclick="startCam()">📷 打开摄像头</button>
-      <button class="btn btn-ghost" onclick="document.getElementById('fileInput').click()">🖼 选择照片</button>`;
-  } else if(state==='camera'){
-    c.innerHTML=`<button class="btn btn-acc" onclick="snap()" style="font-size:16px;padding:16px">● 拍照</button>`;
-  } else if(state==='preview'){
-    c.innerHTML=`<button class="btn btn-ghost" onclick="retake()">↺ 重拍</button>
-      <button class="btn btn-grn" onclick="confirmPhoto()">✓ 确认完成此单</button>`;
-  }
-}
-
-async function startCam(){
-  document.getElementById('camErr').style.display='none';
-  try{
-    camStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'},audio:false});
-    const v=document.getElementById('camVideo');
-    v.srcObject=camStream;v.style.display='block';
-    document.getElementById('camPh').style.display='none';
-    document.getElementById('photoPreview').style.display='none';
-    setModalBtns('camera');
-  }catch(e){
-    const el=document.getElementById('camErr');
-    el.textContent='无法访问摄像头，请允许权限或使用「选择照片」';
-    el.style.display='block';
-  }
-}
-function stopCam(){if(camStream){camStream.getTracks().forEach(t=>t.stop());camStream=null;}}
-
-function snap(){
-  const v=document.getElementById('camVideo');
-  const c=document.getElementById('snapCanvas');
-  c.width=v.videoWidth;c.height=v.videoHeight;
-  c.getContext('2d').drawImage(v,0,0);
-  showPreview(c.toDataURL('image/jpeg',0.82));
-}
-function handleFile(e){
-  const f=e.target.files[0];if(!f)return;
-  const r=new FileReader();r.onload=ev=>showPreview(ev.target.result);r.readAsDataURL(f);
-  stopCam();e.target.value='';
-}
-function showPreview(dataUrl){
-  stopCam();pendingPhoto=dataUrl;
-  const img=document.getElementById('photoPreview');
-  img.src=dataUrl;img.style.display='block';
-  document.getElementById('camVideo').style.display='none';
-  document.getElementById('camPh').style.display='none';
-  document.getElementById('doneBadge').style.display='block';
-  setModalBtns('preview');
-}
-function retake(){
-  pendingPhoto=null;
-  document.getElementById('photoPreview').style.display='none';
-  document.getElementById('doneBadge').style.display='none';
-  document.getElementById('camPh').style.display='flex';
-  setModalBtns('initial');
-}
-function confirmPhoto(){
-  if(!pendingPhoto||modalIdx===null)return;
-  photos[modalIdx]=pendingPhoto;
-  closeModal();
-  if(currentStop<deliveries.length-1)currentStop++;
-  toast(`第 ${modalIdx+1} 单已完成 ✓`,'ok');
-  renderDriver();
-}
-
-// ══════════════════════════════════
-// UTILS
-// ══════════════════════════════════
-function setStatus(type,msg){
-  const el=document.getElementById('statusBar');
-  el.className='status'+(type==='ok'?' ok':type==='err'?' err':type==='busy'?' busy':'');
-  el.innerHTML=type==='busy'?`<div class="spin"></div>${msg}`:msg;
-}
-function toast(msg,type){
-  const t=document.getElementById('toast');
-  t.textContent=(type==='ok'?'✓ ':'✕ ')+msg;
-  t.className='toast show '+(type==='ok'?'ok':'err');
-  setTimeout(()=>t.className='toast',3000);
-}
-function escHtml(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
-function escAttr(s){return String(s||'').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
-</script>
-
-</body>
-</html>
