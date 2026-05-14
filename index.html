@@ -122,7 +122,6 @@ tfoot tr td{border-top:2px solid var(--bd);font-weight:700;color:var(--acc);font
 #toast.show{transform:translateY(0);opacity:1}
 #toast.ok{border-color:#3ecf6e40}#toast.err{border-color:#e0525240}
 </style>
-<script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyD3KjEelB2jBMUUI3EBQKUVuSOd2oim-aw&libraries=geometry" async defer></script>
 </head>
 <body>
 
@@ -579,7 +578,7 @@ function orOpt(route) {
   return best;
 }
 
-function routeByDistance(stops) {
+async function routeByDistance(stops) {
   // Assign fallback coords
   stops.forEach(s => {
     const geo = getCoords(s.address);
@@ -589,46 +588,60 @@ function routeByDistance(stops) {
 
   setStatus('busy', '🗺 正在用 Google Maps 规划最优路线...');
 
-  // Wait for Google Maps API to load, then use DirectionsService
-  function tryOptimize() {
-    if (typeof google === 'undefined' || !google.maps) {
-      setTimeout(tryOptimize, 300);
+  try {
+    // Build waypoints for Routes API
+    const intermediates = stops.map(s => ({
+      address: (s.address||'').trim() + ', Melbourne VIC, Australia'
+    }));
+
+    const body = {
+      origin:      { address: '1/41-43 Lexton Road, Box Hill North VIC 3129, Australia' },
+      destination: { address: '1/41-43 Lexton Road, Box Hill North VIC 3129, Australia' },
+      intermediates: intermediates,
+      travelMode: 'DRIVE',
+      optimizeWaypointOrder: true
+    };
+
+    const res = await fetch('https://routes.googleapis.com/directions/v2:computeRoutes', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': 'AIzaSyD3KjEelB2jBMUUI3EBQKUVuSOd2oim-aw',
+        'X-Goog-FieldMask': 'routes.optimizedIntermediateWaypointIndex,routes.legs.distanceMeters,routes.legs.duration'
+      },
+      body: JSON.stringify(body)
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      console.warn('Routes API error:', res.status, err);
+      fallbackRoute(stops);
       return;
     }
 
-    const svc = new google.maps.DirectionsService();
-    const waypoints = stops.map(s => ({
-      location: (s.address || '').trim() + ', Melbourne VIC, Australia',
-      stopover: true
-    }));
+    const data = await res.json();
+    const route = data.routes[0];
+    const order = route.optimizedIntermediateWaypointIndex;
+    const sorted = order.map(i => stops[i]);
 
-    svc.route({
-      origin: '1/41-43 Lexton Road, Box Hill North VIC 3129, Australia',
-      destination: '1/41-43 Lexton Road, Box Hill North VIC 3129, Australia',
-      waypoints: waypoints,
-      optimizeWaypoints: true,
-      travelMode: google.maps.TravelMode.DRIVING
-    }, (result, status) => {
-      if (status === 'OK') {
-        const order  = result.routes[0].waypoint_order;
-        const route  = order.map(i => stops[i]);
-        const legs   = result.routes[0].legs;
-        const totalKm  = (legs.reduce((s,l) => s+l.distance.value,0)/1000).toFixed(1);
-        const totalMin = Math.round(legs.reduce((s,l) => s+l.duration.value,0)/60);
+    const totalKm  = (route.legs.reduce((s,l) => s+(l.distanceMeters||0), 0)/1000).toFixed(1);
+    const totalMin = Math.round(route.legs.reduce((s,l) => {
+      const sec = parseInt((l.duration||'0s').replace('s',''));
+      return s + sec;
+    }, 0) / 60);
 
-        deliveries = route;
-        renderTable();
-        setStatus('ok', `✓ Google Maps 路线优化完成，共 ${deliveries.length} 单 · 总里程 ${totalKm} km · 预计 ${totalMin} 分钟`);
-        toast(`排线完成！${deliveries.length} 单`, 'ok');
-      } else {
-        console.warn('DirectionsService error:', status);
-        fallbackRoute(stops);
-      }
-      document.getElementById('driverModeBtn').style.display = '';
-      document.getElementById('shareBtn').style.display = '';
-    });
+    deliveries = sorted;
+    renderTable();
+    setStatus('ok', `✓ Google Maps 路线优化完成，共 ${deliveries.length} 单 · 总里程 ${totalKm} km · 预计 ${totalMin} 分钟`);
+    toast(`排线完成！${deliveries.length} 单`, 'ok');
+
+  } catch(e) {
+    console.warn('Routes API failed:', e);
+    fallbackRoute(stops);
   }
-  tryOptimize();
+
+  document.getElementById('driverModeBtn').style.display = '';
+  document.getElementById('shareBtn').style.display = '';
 }
 
 function fallbackRoute(stops) {
@@ -646,7 +659,8 @@ function fallbackRoute(stops) {
 
 
 
-function parseAndSort() {
+
+async function parseAndSort() {
   const raw = document.getElementById('rawInput').value.trim();
   if (!raw) { toast('请先粘贴客户信息','err'); return; }
   setStatus('busy','正在解析...');
@@ -656,7 +670,7 @@ function parseAndSort() {
 
   if (!results.length) { setStatus('err','未能识别任何客户信息，请检查格式'); return; }
 
-  routeByDistance(results);
+  await routeByDistance(results);
 }
 
 function splitBlocks(raw) {
